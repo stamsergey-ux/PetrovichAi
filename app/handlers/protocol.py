@@ -316,7 +316,7 @@ async def confirm_protocol(callback: CallbackQuery):
             await session.commit()
 
             # Store chunks for RAG
-            full_text = f"Совещание: {analysis.get('title', '')}\nДата: {analysis.get('date', '')}\n\n{transcript}"
+            full_text = f"Совещание: {analysis.get('title', '')}\nДата: {analysis.get('date', '')}\n\n{meeting.raw_transcript}"
             if analysis.get("summary"):
                 full_text += f"\n\nКраткое содержание:\n{analysis['summary']}"
             await store_meeting_chunks(meeting.id, full_text)
