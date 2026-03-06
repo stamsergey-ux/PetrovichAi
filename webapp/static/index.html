@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI-Секретарь — Совет Директоров</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: #f9fafb; color: #111827; font-size: 14px; }
+
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 99px; }
+    ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+    .app { display: flex; height: 100vh; overflow: hidden; }
+    .sidebar { width: 224px; flex-shrink: 0; background: #fff; border-right: 1px solid #e5e7eb; display: flex; flex-direction: column; }
+    .main { flex: 1; overflow-y: auto; background: #f9fafb; }
+
+    .sidebar-logo { padding: 18px 16px 16px; border-bottom: 1px solid #f3f4f6; display: flex; align-items: center; gap: 10px; }
+    .logo-icon { width: 30px; height: 30px; background: #4f46e5; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .logo-name { font-size: 13px; font-weight: 700; color: #111827; }
+    .logo-sub  { font-size: 10px; color: #9ca3af; }
+
+    .nav { flex: 1; padding: 10px 8px; display: flex; flex-direction: column; gap: 1px; overflow-y: auto; }
+    .nav-section { font-size: 10px; font-weight: 600; color: #9ca3af; letter-spacing: 0.07em; text-transform: uppercase; padding: 10px 10px 6px; }
+    .nav-btn { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 7px; font-size: 13px; font-weight: 500; color: #6b7280; cursor: pointer; border: none; background: none; width: 100%; text-align: left; transition: all 0.12s; font-family: inherit; }
+    .nav-btn:hover { background: #f3f4f6; color: #111827; }
+    .nav-btn.active { background: #ede9fe; color: #4f46e5; font-weight: 600; }
+    .nav-dot { width: 6px; height: 6px; border-radius: 50%; background: #4f46e5; margin-left: auto; }
+
+    .sidebar-user { padding: 10px 8px; border-top: 1px solid #f3f4f6; }
+    .user-row { display: flex; align-items: center; gap: 9px; padding: 7px 10px; }
+    .user-avatar { width: 27px; height: 27px; border-radius: 7px; background: #ede9fe; color: #4f46e5; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+    .user-email { font-size: 11px; color: #6b7280; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .logout-btn { background: none; border: none; cursor: pointer; color: #9ca3af; padding: 4px; display: flex; transition: color 0.12s; border-radius: 4px; }
+    .logout-btn:hover { color: #4f46e5; }
+
+    .page { padding: 28px 32px; }
+    .page-title { font-size: 21px; font-weight: 800; color: #111827; letter-spacing: -0.4px; }
+    .page-sub { font-size: 13px; color: #9ca3af; margin-top: 3px; }
+
+    .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .stat-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px 20px; position: relative; overflow: hidden; }
+    .stat-accent { position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+    .stat-num { font-size: 34px; font-weight: 800; letter-spacing: -1.5px; line-height: 1; margin-top: 4px; }
+    .stat-label { font-size: 12px; font-weight: 500; color: #6b7280; margin-top: 8px; }
+    .stat-hint { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; }
+    .card-hd { font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; }
+
+    .progress-bg { background: #f3f4f6; border-radius: 99px; height: 6px; overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, #4f46e5, #818cf8); transition: width 0.5s; }
+
+    .filter-bar { display: flex; gap: 3px; background: #f3f4f6; padding: 3px; border-radius: 9px; width: fit-content; }
+    .ftab { padding: 5px 13px; border-radius: 7px; font-size: 12px; font-weight: 500; color: #6b7280; cursor: pointer; border: none; background: none; transition: all 0.12s; font-family: inherit; }
+    .ftab.active { background: #fff; color: #4f46e5; box-shadow: 0 1px 3px rgba(0,0,0,0.08); font-weight: 600; }
+
+    .task-table { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; }
+    .task-th { display: grid; grid-template-columns: 14px 1fr 120px 90px 90px; gap: 12px; padding: 9px 16px; border-bottom: 1px solid #f3f4f6; font-size: 11px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em; }
+    .task-tr { display: grid; grid-template-columns: 14px 1fr 120px 90px 90px; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #f9fafb; cursor: pointer; align-items: center; transition: background 0.1s; }
+    .task-tr:last-child { border-bottom: none; }
+    .task-tr:hover { background: #fafafa; }
+    .task-tr.sel { background: #ede9fe; }
+
+    .meeting-row { display: flex; align-items: center; gap: 14px; padding: 11px 12px; border-radius: 8px; cursor: pointer; transition: background 0.1s; border: 1px solid transparent; }
+    .meeting-row:hover { background: #f9fafb; }
+    .meeting-row.sel { background: #ede9fe; border-color: #c4b5fd; }
+    .date-badge { width: 42px; height: 42px; border-radius: 10px; background: #ede9fe; display: flex; flex-direction: column; align-items: center; justify-content: center; flex-shrink: 0; }
+    .date-day { font-size: 17px; font-weight: 800; color: #4f46e5; line-height: 1; }
+    .date-mon { font-size: 9px; color: #6366f1; text-transform: uppercase; font-weight: 600; }
+
+    .detail { width: 310px; flex-shrink: 0; background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; position: sticky; top: 0; align-self: flex-start; max-height: calc(100vh - 80px); overflow-y: auto; }
+    .detail-drow { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f3f4f6; }
+    .detail-drow:last-child { border-bottom: none; }
+    .dlabel { font-size: 10px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.06em; }
+
+    .s-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+    .s-new { background: #d1d5db; }
+    .s-in_progress { background: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
+    .s-done { background: #10b981; }
+    .s-overdue { background: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,0.12); }
+
+    .pill { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+    .p-new { background: #f3f4f6; color: #6b7280; }
+    .p-in_progress { background: #dbeafe; color: #2563eb; }
+    .p-done { background: #d1fae5; color: #059669; }
+    .p-overdue { background: #fee2e2; color: #dc2626; }
+    .p-high { background: #fee2e2; color: #dc2626; }
+    .p-medium { background: #fef9c3; color: #a16207; }
+    .p-low { background: #d1fae5; color: #059669; }
+    .p-stakeholder { background: #ede9fe; color: #7c3aed; }
+    .p-chairman { background: #dbeafe; color: #1d4ed8; }
+
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; font-family: inherit; transition: all 0.12s; }
+    .btn-primary { background: #4f46e5; color: #fff; }
+    .btn-primary:hover { background: #4338ca; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-outline { background: #fff; color: #374151; border: 1px solid #e5e7eb; }
+    .btn-outline:hover { background: #f9fafb; }
+    .btn-ghost { background: none; color: #6b7280; font-size: 12px; padding: 5px 10px; border: none; }
+    .btn-ghost:hover { color: #4f46e5; background: #ede9fe; border-radius: 6px; }
+    .btn-success { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
+    .btn-success:hover { background: #d1fae5; }
+
+    .input { width: 100%; padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px; font-family: inherit; color: #111827; background: #fff; outline: none; transition: border-color 0.15s; }
+    .input:focus { border-color: #818cf8; box-shadow: 0 0 0 3px rgba(99,102,241,0.08); }
+    .input::placeholder { color: #9ca3af; }
+
+    .member-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+    .member-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 15px; display: flex; align-items: center; gap: 12px; }
+    .member-avatar { width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 800; flex-shrink: 0; }
+
+    /* Gantt specific */
+    .gantt-wrap { display: flex; overflow: hidden; border: 1px solid #e5e7eb; border-radius: 12px; background: #fff; }
+    .gantt-names { flex-shrink: 0; border-right: 1px solid #e5e7eb; background: #fff; position: relative; z-index: 5; }
+    .gantt-scroll { overflow-x: auto; flex: 1; position: relative; }
+    .gantt-legend { display: flex; gap: 20px; flex-wrap: wrap; }
+    .legend-item { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #6b7280; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+    .empty-state { text-align: center; padding: 52px 24px; }
+    .empty-icon { font-size: 30px; margin-bottom: 10px; }
+    .empty-text { font-size: 14px; color: #6b7280; }
+    .empty-hint { font-size: 12px; color: #9ca3af; margin-top: 4px; }
+
+    .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #f9fafb; padding: 16px; }
+    .login-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 30px; width: 100%; max-width: 376px; }
+
+    .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-up { animation: fadeUp 0.2s ease forwards; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { width: 26px; height: 26px; border: 2.5px solid #e5e7eb; border-top-color: #4f46e5; border-radius: 50%; animation: spin 0.65s linear infinite; }
+    .spinner-wrap { display: flex; justify-content: center; align-items: center; padding: 56px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+// ── API ───────────────────────────────────────────────────────────────────────
+async function api(path, opts = {}) {
+  const token = localStorage.getItem('token');
+  const res = await fetch(path, {
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    ...opts,
+  });
+  if (res.status === 401) { localStorage.clear(); window.location.reload(); return; }
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Ошибка'); }
+  return res.json();
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const toDate = iso => { const d = new Date(iso); d.setHours(0,0,0,0); return d; };
+const fmt = iso => iso ? new Date(iso).toLocaleDateString('ru-RU', { day:'2-digit', month:'2-digit', year:'numeric' }) : '—';
+const fmtShort = iso => iso ? new Date(iso).toLocaleDateString('ru-RU', { day:'2-digit', month:'short' }) : '—';
+const S_LABEL = { new:'Новая', in_progress:'В работе', done:'Выполнено', overdue:'Просрочено' };
+const P_LABEL = { high:'Высокий', medium:'Средний', low:'Низкий' };
+
+function Pill({ type, text }) { return <span className={`pill p-${type}`}>{text}</span>; }
+function SPill({ s }) { return <Pill type={s} text={S_LABEL[s]||s} />; }
+function PPill({ p }) { return <Pill type={p} text={P_LABEL[p]||p} />; }
+function SDot({ s }) { return <span className={`s-dot s-${s}`} />; }
+function Spinner() { return <div className="spinner-wrap"><div className="spinner"/></div>; }
+
+// ── Icons ─────────────────────────────────────────────────────────────────────
+const Ic = {
+  db:    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>,
+  task:  <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>,
+  doc:   <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>,
+  cal:   <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path strokeLinecap="round" d="M16 2v4M8 2v4M3 10h18"/></svg>,
+  users: <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path strokeLinecap="round" d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>,
+  gantt: <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" d="M3 5h12M3 10h18M3 15h9M3 20h14"/></svg>,
+  out:   <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>,
+  x:     <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" d="M6 18L18 6M6 6l12 12"/></svg>,
+  chk:   <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" d="M5 13l4 4L19 7"/></svg>,
+  ai:    <svg width="15" height="15" fill="none" stroke="white" strokeWidth="1.8" viewBox="0 0 24 24"><path strokeLinecap="round" d="M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>,
+  chev:  <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" d="M9 5l7 7-7 7"/></svg>,
+};
+
+// ── Login ─────────────────────────────────────────────────────────────────────
+function LoginPage({ onLogin }) {
+  const [email, setEmail] = useState('');
+  const [pw, setPw] = useState('');
+  const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault(); setErr(''); setLoading(true);
+    try {
+      const d = await api('/api/login', { method:'POST', body: JSON.stringify({ email, password: pw }) });
+      localStorage.setItem('token', d.token); localStorage.setItem('email', d.email);
+      onLogin(d.email);
+    } catch (ex) { setErr(ex.message); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="login-wrap">
+      <div className="fade-up" style={{ width:'100%', maxWidth:380 }}>
+        <div style={{ textAlign:'center', marginBottom:28 }}>
+          <div style={{ width:48, height:48, background:'#4f46e5', borderRadius:13, display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 14px', boxShadow:'0 4px 16px rgba(79,70,229,.28)' }}>{Ic.ai}</div>
+          <div style={{ fontSize:20, fontWeight:800, color:'#111827', letterSpacing:'-0.3px' }}>AI-Секретарь</div>
+          <div style={{ fontSize:13, color:'#9ca3af', marginTop:3 }}>Совет Директоров</div>
+        </div>
+        <div className="login-card">
+          <form onSubmit={submit} style={{ display:'flex', flexDirection:'column', gap:14 }}>
+            <div>
+              <label style={{ display:'block', fontSize:12, fontWeight:600, color:'#374151', marginBottom:6 }}>Email</label>
+              <input className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="ivanova@company.ru" required />
+            </div>
+            <div>
+              <label style={{ display:'block', fontSize:12, fontWeight:600, color:'#374151', marginBottom:6 }}>Пароль</label>
+              <input className="input" type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••" required />
+            </div>
+            {err && <div style={{ background:'#fef2f2', border:'1px solid #fecaca', borderRadius:8, padding:'9px 12px', fontSize:13, color:'#dc2626' }}>{err}</div>}
+            <button className="btn btn-primary" type="submit" disabled={loading} style={{ width:'100%', justifyContent:'center', padding:'11px', fontSize:14 }}>
+              {loading ? 'Вход...' : 'Войти'}
+            </button>
+          </form>
+        </div>
+        <div style={{ textAlign:'center', marginTop:14, fontSize:12, color:'#9ca3af' }}>Доступ только для членов Совета Директоров</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+function Sidebar({ page, setPage, email, onLogout }) {
+  const nav = [
+    { id:'dashboard', label:'Дашборд',   icon: Ic.db    },
+    { id:'tasks',     label:'Задачи',    icon: Ic.task  },
+    { id:'gantt',     label:'Гант',      icon: Ic.gantt },
+    { id:'meetings',  label:'Протоколы', icon: Ic.doc   },
+    { id:'agenda',    label:'Совещания', icon: Ic.cal   },
+    { id:'members',   label:'Участники', icon: Ic.users },
+  ];
+  return (
+    <aside className="sidebar">
+      <div className="sidebar-logo">
+        <div className="logo-icon">{Ic.ai}</div>
+        <div><div className="logo-name">AI-Секретарь</div><div className="logo-sub">Board of Directors</div></div>
+      </div>
+      <nav className="nav">
+        <div className="nav-section">Навигация</div>
+        {nav.map(n => (
+          <button key={n.id} className={`nav-btn${page===n.id?' active':''}`} onClick={() => setPage(n.id)}>
+            {n.icon} {n.label}
+            {page===n.id && <span className="nav-dot"/>}
+          </button>
+        ))}
+      </nav>
+      <div className="sidebar-user">
+        <div className="user-row">
+          <div className="user-avatar">{(email||'?')[0].toUpperCase()}</div>
+          <div className="user-email">{email}</div>
+          <button className="logout-btn" onClick={onLogout} title="Выйти">{Ic.out}</button>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+function DashboardPage({ setPage }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => { api('/api/dashboard').then(setData).finally(() => setLoading(false)); }, []);
+  if (loading) return <Spinner/>;
+  if (!data) return null;
+  const { stats, recent_tasks, recent_meetings } = data;
+  const pct = stats.total_tasks ? Math.round(stats.done_tasks/stats.total_tasks*100) : 0;
+  const cards = [
+    { label:'Всего задач',  value:stats.total_tasks,       sub:`${stats.total_meetings} совещаний`, accent:'#4f46e5', num:'#4f46e5' },
+    { label:'В работе',     value:stats.in_progress_tasks,  sub:'активных',              accent:'#3b82f6', num:'#1d4ed8' },
+    { label:'Выполнено',    value:stats.done_tasks,          sub:`${pct}% от плана`,      accent:'#10b981', num:'#059669' },
+    { label:'Просрочено',   value:stats.overdue_tasks,       sub:'требуют внимания',      accent:'#ef4444', num:'#dc2626' },
+  ];
+  return (
+    <div className="page fade-up" style={{ display:'flex', flexDirection:'column', gap:22 }}>
+      <div><div className="page-title">Дашборд</div><div className="page-sub">Общая картина по задачам и совещаниям</div></div>
+      <div className="stat-grid">
+        {cards.map(c => (
+          <div key={c.label} className="stat-card">
+            <div className="stat-accent" style={{ background:c.accent }}/>
+            <div className="stat-num" style={{ color:c.num }}>{c.value}</div>
+            <div className="stat-label">{c.label}</div>
+            <div className="stat-hint">{c.sub}</div>
+          </div>
+        ))}
+      </div>
+      <div className="card">
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+          <span style={{ fontSize:13, fontWeight:600, color:'#374151' }}>Прогресс выполнения задач</span>
+          <span style={{ fontSize:22, fontWeight:800, color:'#4f46e5', letterSpacing:'-0.5px' }}>{pct}%</span>
+        </div>
+        <div className="progress-bg"><div className="progress-fill" style={{ width:`${pct}%` }}/></div>
+        <div style={{ display:'flex', justifyContent:'space-between', marginTop:7, fontSize:11, color:'#9ca3af' }}>
+          <span>{stats.done_tasks} выполнено</span><span>{stats.total_tasks-stats.done_tasks} осталось</span>
+        </div>
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+        <div className="card">
+          <div className="card-hd">Последние задачи <button className="btn btn-ghost" onClick={()=>setPage('tasks')}>Все →</button></div>
+          {recent_tasks.length===0 && <div style={{ fontSize:13, color:'#9ca3af', textAlign:'center', padding:'12px 0' }}>Задач пока нет</div>}
+          {recent_tasks.map(t => (
+            <div key={t.id} style={{ display:'flex', gap:10, alignItems:'flex-start', padding:'8px 0', borderBottom:'1px solid #f9fafb' }}>
+              <SDot s={t.status}/>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div className="truncate" style={{ fontSize:13, color:'#111827', fontWeight:500 }}>{t.title}</div>
+                <div style={{ fontSize:11, color:'#9ca3af', marginTop:2 }}>{t.assignee||'—'} · до {fmt(t.deadline)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="card">
+          <div className="card-hd">Последние совещания <button className="btn btn-ghost" onClick={()=>setPage('meetings')}>Все →</button></div>
+          {recent_meetings.length===0 && <div style={{ fontSize:13, color:'#9ca3af', textAlign:'center', padding:'12px 0' }}>Протоколов пока нет</div>}
+          {recent_meetings.map(m => (
+            <div key={m.id} style={{ display:'flex', gap:12, alignItems:'center', padding:'7px 0', borderBottom:'1px solid #f9fafb' }}>
+              <div className="date-badge">
+                <div className="date-day">{new Date(m.date).getDate()}</div>
+                <div className="date-mon">{new Date(m.date).toLocaleDateString('ru-RU',{month:'short'})}</div>
+              </div>
+              <div>
+                <div style={{ fontSize:13, fontWeight:500, color:'#111827' }}>{m.title||'Совещание'}</div>
+                <div style={{ fontSize:11, color:'#9ca3af', marginTop:1 }}>{fmt(m.date)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Tasks list ────────────────────────────────────────────────────────────────
+function TasksPage() {
+  const [tasks, setTasks] = useState([]); const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState('all'); const [sel, setSel] = useState(null); const [upd, setUpd] = useState(null);
+  const tabs = [{id:'all',label:'Все'},{id:'new',label:'Новые'},{id:'in_progress',label:'В работе'},{id:'overdue',label:'Просрочено'},{id:'done',label:'Выполнено'}];
+  const load = useCallback(() => {
+    setLoading(true);
+    api(`/api/tasks${filter!=='all'?`?status=${filter}`:''}`).then(d=>setTasks(d.tasks)).finally(()=>setLoading(false));
+  }, [filter]);
+  useEffect(()=>{load();},[load]);
+
+  async function patch(id, body) {
+    setUpd(id);
+    try { await api(`/api/tasks/${id}`,{method:'PATCH',body:JSON.stringify(body)}); load(); setSel(null); }
+    finally { setUpd(null); }
+  }
+
+  return (
+    <div className="page fade-up">
+      <div style={{marginBottom:18}}><div className="page-title">Задачи</div><div className="page-sub">{tasks.length} задач</div></div>
+      <div style={{ display:'flex', gap:18, alignItems:'flex-start' }}>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div className="filter-bar" style={{marginBottom:12}}>
+            {tabs.map(t=><button key={t.id} className={`ftab${filter===t.id?' active':''}`} onClick={()=>setFilter(t.id)}>{t.label}</button>)}
+          </div>
+          {loading ? <Spinner/> : (
+            <div className="task-table">
+              {tasks.length===0 && <div className="empty-state"><div className="empty-text">Задач не найдено</div></div>}
+              {tasks.length>0 && <div className="task-th"><span/><span>Задача</span><span>Ответственный</span><span>Дедлайн</span><span>Статус</span></div>}
+              {tasks.map((t,i) => (
+                <div key={t.id} className={`task-tr${sel?.id===t.id?' sel':''}`} onClick={()=>setSel(t)}>
+                  <SDot s={t.status}/>
+                  <div style={{minWidth:0}}>
+                    <div className="truncate" style={{fontSize:13,fontWeight:500,color:'#111827'}}>{t.title}</div>
+                    {t.source==='stakeholder' && <span className="pill p-stakeholder" style={{marginTop:3,display:'inline-flex'}}>Акционер</span>}
+                  </div>
+                  <div className="truncate" style={{fontSize:12,color:'#6b7280'}}>{t.assignee||'—'}</div>
+                  <div style={{fontSize:12,color:t.status==='overdue'?'#dc2626':'#6b7280',fontWeight:t.status==='overdue'?600:400}}>{fmt(t.deadline)}</div>
+                  <div><SPill s={t.status}/></div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        {sel && (
+          <div className="detail fade-up">
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14,gap:8}}>
+              <div style={{fontSize:13,fontWeight:700,color:'#111827',lineHeight:1.4}}>#{sel.id} {sel.title}</div>
+              <button onClick={()=>setSel(null)} className="btn btn-ghost" style={{padding:4,flexShrink:0}}>{Ic.x}</button>
+            </div>
+            <div>
+              {[{l:'Статус',v:<SPill s={sel.status}/>},{l:'Приоритет',v:<PPill p={sel.priority}/>},{l:'Ответственный',v:<span style={{fontSize:12,fontWeight:500}}>{sel.assignee||'—'}</span>},{l:'Дедлайн',v:<span style={{fontSize:12}}>{fmt(sel.deadline)}</span>},{l:'Прогресс',v:<span style={{fontSize:12,fontWeight:600,color:'#4f46e5'}}>{sel.progress_percent}%</span>}].map(r=>(
+                <div key={r.l} className="detail-drow"><span className="dlabel">{r.l}</span>{r.v}</div>
+              ))}
+            </div>
+            {sel.description && <div style={{marginTop:14}}><div className="dlabel" style={{marginBottom:6}}>Описание</div><div style={{fontSize:12,color:'#6b7280',lineHeight:1.7}}>{sel.description}</div></div>}
+            {sel.status!=='done' && (
+              <div style={{marginTop:16,display:'flex',flexDirection:'column',gap:8}}>
+                <div className="dlabel" style={{marginBottom:2}}>Действия</div>
+                {sel.status==='new' && <button className="btn btn-outline" style={{width:'100%',justifyContent:'center'}} onClick={()=>patch(sel.id,{status:'in_progress'})} disabled={upd===sel.id}>Взять в работу</button>}
+                <button className="btn btn-success" style={{width:'100%',justifyContent:'center'}} onClick={()=>patch(sel.id,{status:'done'})} disabled={upd===sel.id}>
+                  {upd===sel.id?'Обновление...':<>{Ic.chk} Отметить выполненным</>}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── GANTT ─────────────────────────────────────────────────────────────────────
+const GANTT_COLORS = {
+  new:        { bar:'#d1d5db', barHover:'#9ca3af', text:'#6b7280' },
+  in_progress:{ bar:'#3b82f6', barHover:'#2563eb', text:'#fff'   },
+  done:       { bar:'#10b981', barHover:'#059669', text:'#fff'   },
+  overdue:    { bar:'#ef4444', barHover:'#dc2626', text:'#fff'   },
+};
+
+function GanttPage() {
+  const [tasks, setTasks] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [hovered, setHovered] = useState(null);
+  const [tooltip, setTooltip] = useState(null);
+  const scrollRef = useRef(null);
+  const [showNoDl, setShowNoDl] = useState(false);
+
+  useEffect(() => { api('/api/tasks').then(d => setTasks(d.tasks)).finally(() => setLoading(false)); }, []);
+
+  if (loading) return <Spinner/>;
+
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  // split tasks
+  const withDl = tasks.filter(t => t.deadline);
+  const noDl   = tasks.filter(t => !t.deadline);
+
+  if (withDl.length === 0) return (
+    <div className="page fade-up">
+      <div style={{marginBottom:20}}><div className="page-title">Диаграмма Ганта</div></div>
+      <div className="card"><div className="empty-state"><div className="empty-icon">📊</div><div className="empty-text">Нет задач с дедлайном</div><div className="empty-hint">Установите дедлайны для задач, чтобы увидеть Гант</div></div></div>
+    </div>
+  );
+
+  // date range
+  const allDates = [today, ...withDl.map(t=>toDate(t.deadline)), ...withDl.map(t=>toDate(t.created_at))];
+  const rawMin = new Date(Math.min(...allDates)); rawMin.setDate(rawMin.getDate()-10);
+  const rawMax = new Date(Math.max(...allDates)); rawMax.setDate(rawMax.getDate()+18);
+  // snap to Monday
+  while(rawMin.getDay()!==1) rawMin.setDate(rawMin.getDate()-1);
+
+  const DAY = 26;   // px per day
+  const ROW = 38;   // px per row
+  const HDR = 58;   // header height (months + weeks)
+  const NAME_W = 210;
+
+  const totalDays = Math.ceil((rawMax - rawMin) / 86400000);
+  const chartW = totalDays * DAY;
+
+  function xOf(date) {
+    const d = toDate(typeof date==='string' ? date : date.toISOString());
+    return Math.max(0, Math.floor((d - rawMin) / 86400000)) * DAY;
+  }
+  const todayX = xOf(today);
+
+  // group by assignee
+  const groups = {};
+  withDl.forEach(t => {
+    const k = t.assignee || 'Без ответственного';
+    if (!groups[k]) groups[k] = [];
+    groups[k].push(t);
+  });
+
+  // flat rows
+  const rows = [];
+  Object.entries(groups).sort(([a],[b])=>a.localeCompare(b,'ru')).forEach(([name, ts]) => {
+    rows.push({ isGroup:true, name, count:ts.length });
+    ts.sort((a,b)=>new Date(a.deadline)-new Date(b.deadline)).forEach(t => rows.push({ isGroup:false, task:t }));
+  });
+
+  const chartH = HDR + rows.length * ROW;
+
+  // months for header
+  const months = [];
+  { const c = new Date(rawMin); c.setDate(1);
+    while (c <= rawMax) {
+      months.push({ x: xOf(c), label: c.toLocaleDateString('ru-RU',{month:'long',year:'numeric'}) });
+      c.setMonth(c.getMonth()+1);
+    }
+  }
+  // week start lines
+  const weekLines = [];
+  { const c = new Date(rawMin);
+    while (c <= rawMax) { weekLines.push(xOf(c)); c.setDate(c.getDate()+7); }
+  }
+
+  // stats
+  const overdueCount = withDl.filter(t=>t.status==='overdue').length;
+  const doneCount    = withDl.filter(t=>t.status==='done').length;
+  const inProgCount  = withDl.filter(t=>t.status==='in_progress').length;
+
+  return (
+    <div className="page fade-up" style={{ paddingBottom:40 }}>
+      {/* Header */}
+      <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:20, gap:16, flexWrap:'wrap' }}>
+        <div>
+          <div className="page-title">Диаграмма Ганта</div>
+          <div className="page-sub">{withDl.length} задач с дедлайном · {noDl.length} без дедлайна</div>
+        </div>
+        {/* Mini stats */}
+        <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+          {[
+            { label:'В работе', value:inProgCount, color:'#1d4ed8', bg:'#dbeafe' },
+            { label:'Просрочено', value:overdueCount, color:'#dc2626', bg:'#fee2e2' },
+            { label:'Выполнено', value:doneCount, color:'#059669', bg:'#d1fae5' },
+          ].map(s => (
+            <div key={s.label} style={{ background:s.bg, borderRadius:10, padding:'8px 14px', display:'flex', flexDirection:'column', alignItems:'center', minWidth:72 }}>
+              <div style={{ fontSize:20, fontWeight:800, color:s.color, letterSpacing:'-0.5px' }}>{s.value}</div>
+              <div style={{ fontSize:11, color:s.color, opacity:0.8, marginTop:1 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Legend */}
+      <div className="gantt-legend" style={{ marginBottom:16 }}>
+        {[['new','Новая','#d1d5db'],['in_progress','В работе','#3b82f6'],['done','Выполнено','#10b981'],['overdue','Просрочено','#ef4444']].map(([k,l,c])=>(
+          <div key={k} className="legend-item">
+            <div className="legend-dot" style={{ background:c }}/>
+            {l}
+          </div>
+        ))}
+        <div className="legend-item">
+          <div style={{ width:16, height:2, background:'#ef4444', borderRadius:1, position:'relative' }}>
+            <div style={{ position:'absolute', top:-3, left:3, right:3, height:8, borderLeft:'2px dashed #ef4444', height:'100%' }}/>
+          </div>
+          Сегодня
+        </div>
+      </div>
+
+      {/* Scroll to today button */}
+      <div style={{ display:'flex', gap:8, marginBottom:12 }}>
+        <button className="btn btn-outline" style={{ fontSize:12, padding:'5px 12px' }}
+          onClick={() => { if(scrollRef.current) scrollRef.current.scrollLeft = Math.max(0, todayX - 300); }}>
+          → Перейти к сегодня
+        </button>
+        {noDl.length > 0 && (
+          <button className="btn btn-ghost" style={{ fontSize:12 }} onClick={()=>setShowNoDl(v=>!v)}>
+            {showNoDl ? 'Скрыть' : 'Показать'} задачи без дедлайна ({noDl.length})
+          </button>
+        )}
+      </div>
+
+      {/* Gantt chart */}
+      <div className="gantt-wrap" style={{ overflow:'hidden' }}>
+        {/* Left name panel */}
+        <div className="gantt-names" style={{ width: NAME_W }}>
+          {/* Header placeholder */}
+          <div style={{ height: HDR, borderBottom:'1px solid #e5e7eb', background:'#f9fafb', display:'flex', alignItems:'flex-end', padding:'0 12px 10px' }}>
+            <span style={{ fontSize:11, fontWeight:600, color:'#9ca3af', textTransform:'uppercase', letterSpacing:'0.05em' }}>Ответственный / Задача</span>
+          </div>
+          {rows.map((r, i) => r.isGroup ? (
+            <div key={i} style={{ height:ROW, display:'flex', alignItems:'center', padding:'0 12px', background:'#f9fafb', borderBottom:'1px solid #e5e7eb' }}>
+              <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                <svg width="12" height="12" fill="none" stroke="#9ca3af" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                <span style={{ fontSize:11, fontWeight:700, color:'#374151', textTransform:'uppercase', letterSpacing:'0.04em' }} className="truncate">{r.name}</span>
+                <span style={{ fontSize:10, color:'#9ca3af', marginLeft:2 }}>({r.count})</span>
+              </div>
+            </div>
+          ) : (
+            <div key={i} title={r.task.title} style={{ height:ROW, display:'flex', alignItems:'center', padding:'0 8px 0 20px', borderBottom:'1px solid #f3f4f6', background: hovered===r.task.id ? '#f5f3ff' : '#fff', cursor:'default' }}>
+              <SDot s={r.task.status}/>
+              <span className="truncate" style={{ fontSize:12, color:'#374151', marginLeft:8, flex:1 }}>{r.task.title}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Scrollable chart */}
+        <div ref={scrollRef} className="gantt-scroll">
+          <svg width={chartW} height={chartH} style={{ display:'block', minWidth:chartW }}>
+            {/* Weekend shading */}
+            {Array.from({length: totalDays}, (_,i) => {
+              const d = new Date(rawMin); d.setDate(d.getDate()+i);
+              return (d.getDay()===0||d.getDay()===6) ? (
+                <rect key={i} x={i*DAY} y={0} width={DAY} height={chartH} fill="rgba(0,0,0,0.018)"/>
+              ) : null;
+            })}
+
+            {/* Week vertical lines */}
+            {weekLines.map((x,i) => <line key={i} x1={x} y1={HDR} x2={x} y2={chartH} stroke="#f3f4f6" strokeWidth="1"/>)}
+
+            {/* Month header */}
+            {months.map((m,i) => (
+              <g key={i}>
+                <rect x={m.x} y={0} width={(months[i+1]?.x||chartW)-m.x} height={HDR} fill={i%2===0?'#f9fafb':'#f3f4f6'}/>
+                <line x1={m.x} y1={0} x2={m.x} y2={HDR} stroke="#e5e7eb" strokeWidth="1"/>
+                <text x={m.x+10} y={22} fontSize="12" fontWeight="600" fill="#374151" fontFamily="Inter,sans-serif"
+                  style={{textTransform:'capitalize'}}>{m.label.charAt(0).toUpperCase()+m.label.slice(1)}</text>
+              </g>
+            ))}
+
+            {/* Week day numbers row */}
+            {weekLines.map((x,i) => {
+              const d = new Date(rawMin); d.setDate(d.getDate()+i*7);
+              return (
+                <text key={i} x={x+4} y={HDR-8} fontSize="10" fill="#9ca3af" fontFamily="Inter,sans-serif">
+                  {d.getDate()} {d.toLocaleDateString('ru-RU',{month:'short'})}
+                </text>
+              );
+            })}
+
+            {/* Header bottom line */}
+            <line x1={0} y1={HDR} x2={chartW} y2={HDR} stroke="#e5e7eb" strokeWidth="1"/>
+
+            {/* Row backgrounds */}
+            {rows.map((r,i) => {
+              const y = HDR + i*ROW;
+              const bg = r.isGroup ? '#f9fafb' : (hovered===r.task?.id ? '#f5f3ff' : (i%2===0?'#fff':'#fafafa'));
+              return <rect key={i} x={0} y={y} width={chartW} height={ROW} fill={bg}/>;
+            })}
+
+            {/* Row dividers */}
+            {rows.map((_,i) => (
+              <line key={i} x1={0} y1={HDR+(i+1)*ROW} x2={chartW} y2={HDR+(i+1)*ROW}
+                stroke={rows[i]?.isGroup ? '#e5e7eb' : '#f3f4f6'} strokeWidth="1"/>
+            ))}
+
+            {/* Group label lines */}
+            {rows.map((r,i) => r.isGroup ? (
+              <rect key={`gl-${i}`} x={0} y={HDR+i*ROW} width={3} height={ROW} fill="#4f46e5" opacity="0.5"/>
+            ) : null)}
+
+            {/* Past shading (before today) */}
+            <rect x={0} y={HDR} width={todayX} height={chartH-HDR} fill="rgba(0,0,0,0.018)"/>
+
+            {/* Today line */}
+            <line x1={todayX} y1={0} x2={todayX} y2={chartH} stroke="#ef4444" strokeWidth="1.5" strokeDasharray="5,3" opacity="0.8"/>
+            {/* Today label */}
+            <rect x={todayX-22} y={HDR-1} width={44} height={16} rx={3} fill="#ef4444"/>
+            <text x={todayX} y={HDR-1+11} textAnchor="middle" fontSize="9" fontWeight="700" fill="white" fontFamily="Inter,sans-serif">СЕГОДНЯ</text>
+
+            {/* Task bars */}
+            {rows.map((r,i) => {
+              if (r.isGroup) return null;
+              const t = r.task;
+              const y = HDR + i * ROW;
+              const barY = y + 9;
+              const barH = ROW - 18;
+              const c = GANTT_COLORS[t.status] || GANTT_COLORS.new;
+
+              const startD = toDate(t.created_at);
+              const endD   = toDate(t.deadline);
+              // cap bar start so it's not too long
+              const cappedStart = new Date(Math.max(startD, new Date(rawMin)));
+              const x0 = xOf(cappedStart);
+              const x1 = xOf(endD);
+              const bw = Math.max(x1 - x0, DAY * 0.5);
+              const isHov = hovered === t.id;
+
+              return (
+                <g key={t.id}
+                  onMouseEnter={e => { setHovered(t.id); setTooltip({ x: e.clientX, y: e.clientY, task: t }); }}
+                  onMouseMove={e => setTooltip(p => p ? {...p, x:e.clientX, y:e.clientY} : p)}
+                  onMouseLeave={() => { setHovered(null); setTooltip(null); }}
+                  style={{ cursor:'pointer' }}>
+
+                  {/* Bar shadow */}
+                  {isHov && <rect x={x0} y={barY+1} width={bw} height={barH} rx={5} fill="rgba(0,0,0,0.12)"/>}
+
+                  {/* Main bar */}
+                  <rect x={x0} y={barY} width={bw} height={barH} rx={5}
+                    fill={isHov ? c.barHover : c.bar}
+                    opacity={t.status==='done' ? 0.65 : 1}/>
+
+                  {/* Done strikethrough */}
+                  {t.status==='done' && (
+                    <line x1={x0+6} y1={barY+barH/2} x2={x0+bw-6} y2={barY+barH/2} stroke="white" strokeWidth="1.5" opacity="0.6"/>
+                  )}
+
+                  {/* Overdue: striped pattern past today */}
+                  {t.status==='overdue' && x1 > todayX && (
+                    <rect x={Math.min(x0,todayX)} y={barY} width={Math.min(todayX,x1)-Math.min(x0,todayX)} height={barH} rx={0}
+                      fill="#fca5a5" opacity="0.4"/>
+                  )}
+
+                  {/* Deadline diamond */}
+                  <polygon
+                    points={`${x1},${barY-4} ${x1+5},${barY+barH/2} ${x1},${barY+barH+4} ${x1-5},${barY+barH/2}`}
+                    fill={isHov ? c.barHover : c.bar} opacity="0.9"/>
+
+                  {/* Label inside bar if wide enough */}
+                  {bw > 60 && (
+                    <text x={x0+8} y={barY+barH/2+4} fontSize="10" fontWeight="500" fill={c.text} fontFamily="Inter,sans-serif"
+                      style={{ userSelect:'none', pointerEvents:'none' }}>
+                      <tspan>{t.title.length>24 ? t.title.slice(0,22)+'…' : t.title}</tspan>
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+      </div>
+
+      {/* Tooltip */}
+      {tooltip && (
+        <div style={{ position:'fixed', left:tooltip.x+14, top:tooltip.y-10, zIndex:1000, background:'#111827', color:'#f9fafb', borderRadius:10, padding:'10px 14px', fontSize:12, maxWidth:240, pointerEvents:'none', boxShadow:'0 8px 24px rgba(0,0,0,0.2)' }}>
+          <div style={{ fontWeight:700, marginBottom:6, lineHeight:1.4 }}>{tooltip.task.title}</div>
+          <div style={{ display:'flex', flexDirection:'column', gap:3, color:'#9ca3af' }}>
+            <span>Ответственный: <span style={{color:'#e5e7eb'}}>{tooltip.task.assignee||'—'}</span></span>
+            <span>Дедлайн: <span style={{color:tooltip.task.status==='overdue'?'#fca5a5':'#e5e7eb'}}>{fmt(tooltip.task.deadline)}</span></span>
+            <span>Статус: <span style={{color:'#e5e7eb'}}>{S_LABEL[tooltip.task.status]||tooltip.task.status}</span></span>
+            {tooltip.task.progress_percent > 0 && <span>Прогресс: <span style={{color:'#818cf8'}}>{tooltip.task.progress_percent}%</span></span>}
+          </div>
+        </div>
+      )}
+
+      {/* No-deadline tasks */}
+      {showNoDl && noDl.length > 0 && (
+        <div style={{ marginTop:24 }}>
+          <div style={{ fontSize:14, fontWeight:600, color:'#374151', marginBottom:10 }}>Задачи без дедлайна ({noDl.length})</div>
+          <div className="task-table">
+            <div className="task-th" style={{ gridTemplateColumns:'14px 1fr 130px 90px' }}><span/><span>Задача</span><span>Ответственный</span><span>Статус</span></div>
+            {noDl.map(t => (
+              <div key={t.id} className="task-tr" style={{ gridTemplateColumns:'14px 1fr 130px 90px', cursor:'default' }}>
+                <SDot s={t.status}/>
+                <div className="truncate" style={{ fontSize:13, color:'#111827', fontWeight:500 }}>{t.title}</div>
+                <div className="truncate" style={{ fontSize:12, color:'#6b7280' }}>{t.assignee||'—'}</div>
+                <SPill s={t.status}/>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Meetings ──────────────────────────────────────────────────────────────────
+function MeetingsPage() {
+  const [meetings, setMeetings] = useState([]); const [loading, setLoading] = useState(true);
+  const [selId, setSelId] = useState(null); const [detail, setDetail] = useState(null); const [dLoad, setDLoad] = useState(false);
+  useEffect(()=>{ api('/api/meetings').then(d=>setMeetings(d.meetings)).finally(()=>setLoading(false)); },[]);
+  async function loadDetail(id) { setDLoad(true); setSelId(id); try { setDetail(await api(`/api/meetings/${id}`)); } finally { setDLoad(false); } }
+  return (
+    <div className="page fade-up">
+      <div style={{marginBottom:18}}><div className="page-title">Протоколы совещаний</div><div className="page-sub">{meetings.length} записей</div></div>
+      <div style={{ display:'flex', gap:18, alignItems:'flex-start' }}>
+        <div style={{ flex:1, minWidth:0 }}>
+          {loading ? <Spinner/> : (
+            <div className="card" style={{padding:8}}>
+              {meetings.length===0 && <div className="empty-state"><div className="empty-text">Протоколов пока нет</div></div>}
+              {meetings.map(m => (
+                <div key={m.id} className={`meeting-row${selId===m.id?' sel':''}`} onClick={()=>loadDetail(m.id)}>
+                  <div className="date-badge">
+                    <div className="date-day">{new Date(m.date).getDate()}</div>
+                    <div className="date-mon">{new Date(m.date).toLocaleDateString('ru-RU',{month:'short'})}</div>
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:'#111827'}}>{m.title||'Совещание'}</div>
+                    {m.participants && <div className="truncate" style={{fontSize:11,color:'#9ca3af',marginTop:3}}>{m.participants}</div>}
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+                    {m.is_confirmed && <Pill type="done" text="Подтверждён"/>}
+                    <span style={{color:'#9ca3af'}}>{Ic.chev}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        {selId && (
+          <div className="detail fade-up">
+            {dLoad ? <Spinner/> : detail ? (
+              <>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14}}>
+                  <div><div style={{fontSize:14,fontWeight:700,color:'#111827'}}>{detail.title||'Совещание'}</div><div style={{fontSize:12,color:'#9ca3af',marginTop:3}}>{fmt(detail.date)}</div></div>
+                  <button onClick={()=>{setSelId(null);setDetail(null);}} className="btn btn-ghost" style={{padding:4}}>{Ic.x}</button>
+                </div>
+                {detail.participants && <div style={{marginBottom:12}}><div className="dlabel" style={{marginBottom:5}}>Участники</div><div style={{fontSize:12,color:'#6b7280'}}>{detail.participants}</div></div>}
+                {detail.summary && <div style={{marginBottom:12}}><div className="dlabel" style={{marginBottom:5}}>Резюме</div><div style={{fontSize:12,color:'#374151',lineHeight:1.7,whiteSpace:'pre-line'}}>{detail.summary}</div></div>}
+                {detail.decisions?.length>0 && <div style={{marginBottom:12}}><div className="dlabel" style={{marginBottom:8}}>Решения ({detail.decisions.length})</div>{detail.decisions.map((d,i)=><div key={i} style={{display:'flex',gap:8,marginBottom:6}}><div style={{width:16,height:16,borderRadius:'50%',background:'#d1fae5',border:'1px solid #a7f3d0',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:1}}><span style={{color:'#059669'}}>{Ic.chk}</span></div><div style={{fontSize:12,color:'#374151',lineHeight:1.6}}>{d.text||d}</div></div>)}</div>}
+                {detail.open_questions?.length>0 && <div style={{marginBottom:12}}><div className="dlabel" style={{marginBottom:8}}>Открытые вопросы</div>{detail.open_questions.map((q,i)=><div key={i} style={{fontSize:12,color:'#374151',lineHeight:1.6,padding:'7px 10px',background:'#fefce8',border:'1px solid #fde68a',borderRadius:7,marginBottom:5}}>{q.text||q}</div>)}</div>}
+                {detail.tasks?.length>0 && <div><div className="dlabel" style={{marginBottom:8}}>Задачи из совещания ({detail.tasks.length})</div>{detail.tasks.map(t=><div key={t.id} style={{display:'flex',alignItems:'center',gap:8,padding:'5px 0',borderBottom:'1px solid #f3f4f6'}}><SDot s={t.status}/><span className="truncate" style={{fontSize:12,color:'#374151',flex:1}}>{t.title}</span><span style={{fontSize:11,color:'#9ca3af',flexShrink:0}}>{t.assignee}</span></div>)}</div>}
+              </>
+            ) : null}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Agenda ────────────────────────────────────────────────────────────────────
+function AgendaPage() {
+  const [scheduled, setScheduled] = useState([]); const [requests, setRequests] = useState([]); const [loading, setLoading] = useState(true);
+  useEffect(()=>{ Promise.all([api('/api/scheduled'),api('/api/agenda-requests')]).then(([s,r])=>{setScheduled(s.scheduled);setRequests(r.requests);}).finally(()=>setLoading(false)); },[]);
+  if (loading) return <Spinner/>;
+  return (
+    <div className="page fade-up">
+      <div style={{marginBottom:20}}><div className="page-title">Плановые совещания</div><div className="page-sub">Расписание и повестки</div></div>
+      {scheduled.length===0 ? <div className="card"><div className="empty-state"><div className="empty-icon">📅</div><div className="empty-text">Плановых совещаний нет</div><div className="empty-hint">Запланируйте совещание через Telegram-бот</div></div></div>
+        : scheduled.map(m=>(
+        <div key={m.id} className="card" style={{marginBottom:14}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:m.agenda_text?14:0}}>
+            <div style={{display:'flex',alignItems:'center',gap:14}}>
+              <div className="date-badge"><div className="date-day">{new Date(m.scheduled_date).getDate()}</div><div className="date-mon">{new Date(m.scheduled_date).toLocaleDateString('ru-RU',{month:'short'})}</div></div>
+              <div><div style={{fontSize:14,fontWeight:700,color:'#111827'}}>{m.title||'Совещание'}</div><div style={{fontSize:12,color:'#9ca3af',marginTop:2}}>{fmt(m.scheduled_date)}</div></div>
+            </div>
+            {m.agenda_sent && <Pill type="done" text="Повестка разослана"/>}
+          </div>
+          {m.agenda_text && <div style={{fontSize:12,color:'#374151',background:'#f9fafb',border:'1px solid #e5e7eb',borderRadius:8,padding:'12px 14px',whiteSpace:'pre-line',lineHeight:1.8,maxHeight:200,overflowY:'auto'}}>{m.agenda_text}</div>}
+        </div>
+      ))}
+      {requests.length>0 && <>
+        <div style={{fontSize:15,fontWeight:700,color:'#111827',margin:'20px 0 10px'}}>Запросы в повестку</div>
+        <div className="card" style={{padding:8}}>
+          {requests.map(r=><div key={r.id} style={{display:'flex',alignItems:'flex-start',gap:12,padding:'10px 8px',borderBottom:'1px solid #f3f4f6'}}>
+            <div style={{flex:1}}><div style={{fontSize:13,fontWeight:500,color:'#111827'}}>{r.topic}</div>{r.reason&&<div style={{fontSize:11,color:'#6b7280',marginTop:2}}>{r.reason}</div>}<div style={{fontSize:11,color:'#9ca3af',marginTop:3}}>{r.member} · {fmtShort(r.created_at)}</div></div>
+            {r.is_included&&<Pill type="done" text="Включён"/>}
+          </div>)}
+        </div>
+      </>}
+    </div>
+  );
+}
+
+// ── Members ───────────────────────────────────────────────────────────────────
+function MembersPage() {
+  const [members, setMembers] = useState([]); const [loading, setLoading] = useState(true);
+  useEffect(()=>{ api('/api/members').then(d=>setMembers(d.members)).finally(()=>setLoading(false)); },[]);
+  if (loading) return <Spinner/>;
+  const pal=[{bg:'#ede9fe',fg:'#4f46e5'},{bg:'#dbeafe',fg:'#1d4ed8'},{bg:'#d1fae5',fg:'#059669'},{bg:'#fce7f3',fg:'#be185d'},{bg:'#fef3c7',fg:'#b45309'},{bg:'#e0f2fe',fg:'#0369a1'}];
+  return (
+    <div className="page fade-up">
+      <div style={{marginBottom:20}}><div className="page-title">Участники</div><div className="page-sub">{members.length} зарегистрировано</div></div>
+      <div className="member-grid">
+        {members.length===0 && <div className="card" style={{gridColumn:'1/-1'}}><div className="empty-state"><div className="empty-text">Участники не зарегистрированы</div><div className="empty-hint">Попросите написать /start в Telegram</div></div></div>}
+        {members.map((m,i)=>{const c=pal[i%pal.length]; return(
+          <div key={m.id} className="member-card">
+            <div className="member-avatar" style={{background:c.bg,color:c.fg}}>{m.name[0]}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div className="truncate" style={{fontSize:13,fontWeight:600,color:'#111827'}}>{m.name}</div>
+              {m.username&&<div style={{fontSize:11,color:'#9ca3af',marginTop:1}}>@{m.username}</div>}
+              <div style={{display:'flex',gap:4,marginTop:6,flexWrap:'wrap'}}>
+                {m.is_chairman&&<Pill type="chairman" text="Председатель"/>}
+                {m.is_stakeholder&&<Pill type="stakeholder" text="Акционер"/>}
+              </div>
+            </div>
+          </div>
+        );})}
+      </div>
+    </div>
+  );
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
+function App() {
+  const [email, setEmail] = useState(localStorage.getItem('email'));
+  const [page, setPage] = useState('dashboard');
+  if (!email || !localStorage.getItem('token')) return <LoginPage onLogin={e=>setEmail(e)}/>;
+  const pages = { dashboard:<DashboardPage setPage={setPage}/>, tasks:<TasksPage/>, gantt:<GanttPage/>, meetings:<MeetingsPage/>, agenda:<AgendaPage/>, members:<MembersPage/> };
+  return (
+    <div className="app">
+      <Sidebar page={page} setPage={setPage} email={email} onLogout={()=>{localStorage.clear();setEmail(null);}}/>
+      <main className="main">{pages[page]||pages.dashboard}</main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
