@@ -82,6 +82,13 @@ STAKEHOLDER_INTRO = """💎 <b>AI-секретарь — Акционер</b>
 · Спрашивайте в свободной форме:
   <i>«Что решили на последнем совещании?»</i>
 
+🎙 <b>Голосовые</b>
+Отправь войс — распознаю и выполню команду.
+
+⚙️ <b>Расширенные функции</b>
+Нажми кнопку — откроется полный список возможностей:
+протоколы, задачи, напоминания, совещания и свободный чат.
+
 💬 <b>Свободный чат</b>
 Пишите любые вопросы — отвечу на основе данных Совета."""
 
@@ -127,6 +134,7 @@ def _stakeholder_keyboard() -> ReplyKeyboardMarkup:
     buttons = [
         [KeyboardButton(text="💎 Поставить задачу"), KeyboardButton(text="💎 Мои поручения")],
         [KeyboardButton(text="📋 Мои задачи"), KeyboardButton(text="📝 Протокол")],
+        [KeyboardButton(text="⚙️ Расширенные функции")],
         [KeyboardButton(text="🔄 Перезапустить бот"), KeyboardButton(text="❓ Помощь")],
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)

@@ -595,6 +595,12 @@ async def _show_analytics(message: Message):
 
 async def _show_advanced_menu(message: Message):
     """Show advanced admin menu with inline buttons."""
+    from app.utils import is_stakeholder
+    if is_stakeholder(message.from_user.username):
+        from app.handlers.onboarding import MEMBER_INTRO
+        name = message.from_user.first_name or message.from_user.username or "коллега"
+        await message.answer(MEMBER_INTRO.format(name=name), parse_mode="HTML")
+        return
     if not is_chairman(message.from_user.username):
         await message.answer("⛔ Расширенные функции доступны администраторам.")
         return
