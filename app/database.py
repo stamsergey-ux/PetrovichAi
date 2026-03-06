@@ -54,6 +54,7 @@ class Meeting(Base):
     open_questions = Column(Text, nullable=True)  # AI-extracted open questions (JSON)
     agenda_items_next = Column(Text, nullable=True)  # items for next meeting agenda (JSON)
     is_confirmed = Column(Boolean, default=False)
+    analysis_json = Column(Text, nullable=True)  # raw AI analysis, cleared after confirm
     created_at = Column(DateTime, default=datetime.utcnow)
 
     tasks = relationship("Task", back_populates="meeting")
@@ -182,6 +183,7 @@ async def _migrate_db():
                 "ALTER TABLE members ADD COLUMN is_stakeholder BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE tasks ADD COLUMN source VARCHAR(20) DEFAULT 'manual'",
                 "ALTER TABLE tasks ADD COLUMN created_by_id INTEGER REFERENCES members(id)",
+                "ALTER TABLE meetings ADD COLUMN analysis_json TEXT",
             ]:
                 try:
                     await db.execute(sql)

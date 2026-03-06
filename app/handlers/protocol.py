@@ -19,10 +19,6 @@ from app.utils import is_chairman
 logger = logging.getLogger(__name__)
 router = Router()
 
-# Storage for pending reviews: {chairman_telegram_id: [list of reviews]}
-_pending_reviews: dict[int, list] = {}
-
-
 def _escape_md(text: str) -> str:
     """Escape special characters for MarkdownV2."""
     special = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
@@ -73,11 +69,11 @@ async def _extract_text_from_file(message: Message, bot: Bot) -> str | None:
             return content.decode("latin-1", errors="ignore")
 
 
-def _review_keyboard(review_index: int = 0) -> InlineKeyboardMarkup:
+def _review_keyboard(meeting_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_protocol:{review_index}"),
-            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_protocol:{review_index}"),
+            InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_protocol:{meeting_id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_protocol:{meeting_id}"),
         ]
     ])
 
@@ -137,17 +133,31 @@ async def _process_transcript(message: Message, transcript: str, source_name: st
         await message.answer(f"⚠️ Ошибка анализа: {analysis['error']}")
         return
 
-    # Store for review
-    user_id = message.from_user.id
-    if user_id not in _pending_reviews:
-        _pending_reviews[user_id] = []
+    # Persist pending review to DB so it survives bot restarts
+    meeting_date_str = analysis.get("date")
+    meeting_date = datetime.now()
+    if meeting_date_str:
+        try:
+            meeting_date = datetime.fromisoformat(meeting_date_str)
+        except ValueError:
+            pass
 
-    review_index = len(_pending_reviews[user_id])
-    _pending_reviews[user_id].append({
-        "transcript": transcript,
-        "analysis": analysis,
-        "source": source_name,
-    })
+    async with async_session() as session:
+        meeting = Meeting(
+            date=meeting_date,
+            title=analysis.get("title", ""),
+            raw_transcript=transcript,
+            summary=analysis.get("summary", ""),
+            participants=", ".join(analysis.get("participants", [])),
+            decisions=json.dumps(analysis.get("decisions", []), ensure_ascii=False),
+            open_questions=json.dumps(analysis.get("open_questions", []), ensure_ascii=False),
+            agenda_items_next=json.dumps(analysis.get("agenda_next", []), ensure_ascii=False),
+            analysis_json=json.dumps(analysis, ensure_ascii=False),
+            is_confirmed=False,
+        )
+        session.add(meeting)
+        await session.commit()
+        meeting_id = meeting.id
 
     # Format review message (plain text — more reliable for long AI output)
     tasks = analysis.get("tasks", [])
@@ -202,51 +212,29 @@ async def _process_transcript(message: Message, transcript: str, source_name: st
         chunks = [review_text[i:i+4000] for i in range(0, len(review_text), 4000)]
         for chunk in chunks[:-1]:
             await message.answer(chunk)
-        await message.answer(chunks[-1], reply_markup=_review_keyboard(review_index))
+        await message.answer(chunks[-1], reply_markup=_review_keyboard(meeting_id))
     else:
-        await message.answer(review_text, reply_markup=_review_keyboard(review_index))
+        await message.answer(review_text, reply_markup=_review_keyboard(meeting_id))
 
 
 @router.callback_query(F.data.startswith("confirm_protocol:"))
 async def confirm_protocol(callback: CallbackQuery):
     """Chairman confirms the analyzed protocol."""
-    user_id = callback.from_user.id
-    review_index = int(callback.data.split(":")[1])
-
-    reviews = _pending_reviews.get(user_id, [])
-    if review_index >= len(reviews) or reviews[review_index] is None:
-        await callback.answer("Этот протокол уже обработан.")
-        return
-
-    review = reviews[review_index]
-    reviews[review_index] = None  # Mark as processed
-
-    analysis = review["analysis"]
-    transcript = review["transcript"]
+    meeting_id = int(callback.data.split(":")[1])
 
     try:
         async with async_session() as session:
-            # Save meeting
-            meeting_date_str = analysis.get("date")
-            meeting_date = datetime.now()
-            if meeting_date_str:
-                try:
-                    meeting_date = datetime.fromisoformat(meeting_date_str)
-                except ValueError:
-                    pass
+            meeting = await session.get(Meeting, meeting_id)
+            if not meeting:
+                await callback.answer("Протокол не найден.")
+                return
+            if meeting.is_confirmed:
+                await callback.answer("Этот протокол уже подтверждён.")
+                return
 
-            meeting = Meeting(
-                date=meeting_date,
-                title=analysis.get("title", ""),
-                raw_transcript=transcript,
-                summary=analysis.get("summary", ""),
-                participants=", ".join(analysis.get("participants", [])),
-                decisions=json.dumps(analysis.get("decisions", []), ensure_ascii=False),
-                open_questions=json.dumps(analysis.get("open_questions", []), ensure_ascii=False),
-                agenda_items_next=json.dumps(analysis.get("agenda_next", []), ensure_ascii=False),
-                is_confirmed=True,
-            )
-            session.add(meeting)
+            analysis = json.loads(meeting.analysis_json or "{}")
+            meeting.is_confirmed = True
+            meeting.analysis_json = None  # free up space
             await session.flush()
 
             # Save tasks
@@ -384,14 +372,12 @@ def _fuzzy_match_member(name: str, members: list) -> Member | None:
 
 @router.callback_query(F.data.startswith("reject_protocol:"))
 async def reject_protocol(callback: CallbackQuery):
-    """Chairman rejects the analyzed protocol."""
-    user_id = callback.from_user.id
-    review_index = int(callback.data.split(":")[1])
-
-    reviews = _pending_reviews.get(user_id, [])
-    if review_index < len(reviews):
-        reviews[review_index] = None
-
+    """Chairman rejects the analyzed protocol — delete from DB."""
+    meeting_id = int(callback.data.split(":")[1])
+    from sqlalchemy import delete as sa_delete
+    async with async_session() as session:
+        await session.execute(sa_delete(Meeting).where(Meeting.id == meeting_id))
+        await session.commit()
     await callback.message.answer("❌ Протокол отклонён. Можешь отправить файл заново.")
     await callback.answer("Отклонено")
 
