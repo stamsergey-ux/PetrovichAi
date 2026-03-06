@@ -203,7 +203,7 @@ async def _process_transcript(message: Message, transcript: str, source_name: st
         review_text += f"{'─' * 30}\n"
         review_text += f"📌 НА СЛЕДУЮЩЕЕ СОВЕЩАНИЕ ({len(agenda)})\n\n"
         for a in agenda:
-            presenter = a.get("presenter", "?")
+            presenter = a.get("presenter") or "не указан"
             mins = a.get("estimated_minutes", "?")
             review_text += f"  • [{mins} мин] {presenter}: {a['topic']}\n"
 
