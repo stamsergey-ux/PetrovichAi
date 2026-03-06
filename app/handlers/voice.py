@@ -32,14 +32,9 @@ async def handle_voice(message: Message, bot: Bot):
         # Show transcription
         await message.answer(f"📝 <i>Распознано:</i>\n{text}", parse_mode="HTML")
 
-        # Now process the transcribed text as if user typed it
-        # Create a fake-ish approach: just set message.text and call the text handler
-        # Instead, import and call directly
-        from app.handlers.chat import handle_text_message
-
-        # We need to temporarily set text on the message for the handler
-        message.text = text
-        await handle_text_message(message)
+        # Process transcribed text as a command/AI query
+        from app.handlers.chat import _dispatch_text
+        await _dispatch_text(message, text)
 
     except Exception as e:
         logger.error(f"Voice processing error: {e}")
@@ -63,9 +58,8 @@ async def handle_video_note(message: Message, bot: Bot):
 
         await message.answer(f"📝 <i>Распознано:</i>\n{text}", parse_mode="HTML")
 
-        from app.handlers.chat import handle_text_message
-        message.text = text
-        await handle_text_message(message)
+        from app.handlers.chat import _dispatch_text
+        await _dispatch_text(message, text)
 
     except Exception as e:
         logger.error(f"Video note processing error: {e}")

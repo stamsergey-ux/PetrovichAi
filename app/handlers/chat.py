@@ -303,7 +303,12 @@ async def cb_view_protocol(callback: CallbackQuery):
 @router.message(F.text)
 async def handle_text_message(message: Message):
     """Handle all text messages as AI chat (catch-all handler, must be registered last)."""
-    text = message.text.strip().lower()
+    await _dispatch_text(message, message.text)
+
+
+async def _dispatch_text(message: Message, raw_text: str):
+    """Dispatch a text (from keyboard or transcribed voice) to the right handler."""
+    text = raw_text.strip().lower()
 
     # Quick command detection (including persistent keyboard button texts)
     if text in ("мои задачи", "мои задачи?", "какие у меня задачи", "какие у меня задачи?",
@@ -347,7 +352,7 @@ async def handle_text_message(message: Message):
         return await _render_my_assignments(message)
 
     # For everything else — AI chat with RAG
-    await _ai_chat(message)
+    await _ai_chat(message, override_text=raw_text)
 
 
 async def _show_my_tasks(message: Message):
@@ -697,19 +702,20 @@ async def cb_adv_schedule(callback: CallbackQuery):
     )
 
 
-async def _ai_chat(message: Message):
+async def _ai_chat(message: Message, override_text: str | None = None):
     """Handle free-form AI chat with RAG context."""
     user = message.from_user
     user_name = user.first_name or user.username or "Пользователь"
+    user_text = override_text or message.text
 
     # Search relevant meeting chunks
-    chunks = await search_relevant_chunks(message.text, limit=5)
+    chunks = await search_relevant_chunks(user_text, limit=5)
     tasks_summary = await _get_tasks_summary()
 
     await message.answer("🤖 Думаю...")
 
     response = await chat_with_context(
-        user_message=message.text,
+        user_message=user_text,
         user_name=user_name,
         context_chunks=chunks,
         tasks_summary=tasks_summary,
