@@ -226,6 +226,11 @@ async def task_acknowledgment(callback: CallbackQuery, bot: Bot):
         await callback.answer("Задача не найдена.", show_alert=True)
         return
 
+    # Only the actual assignee can acknowledge the task
+    if not assignee or task.assignee_id != assignee.id:
+        await callback.answer("⛔ Только исполнитель задачи может подтвердить получение.", show_alert=True)
+        return
+
     assignee_name = assignee.display_name or assignee.first_name or callback.from_user.first_name if assignee else callback.from_user.first_name
     deadline_str = task.deadline.strftime("%d.%m.%Y") if task.deadline else "без срока"
 

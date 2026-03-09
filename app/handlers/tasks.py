@@ -262,14 +262,23 @@ async def _send_dashboard_to(message):
 
 @router.callback_query(F.data.startswith("task_done:"))
 async def cb_task_done(callback: CallbackQuery):
-    """Mark task as done."""
+    """Mark task as done. Only the assignee or chairman can mark tasks done."""
     task_id = int(callback.data.split(":")[1])
+    admin = is_chairman(callback.from_user.username)
 
     async with async_session() as session:
         task = await session.get(Task, task_id)
         if not task:
             await callback.answer("Задача не найдена.")
             return
+
+        if not admin:
+            member = (await session.execute(
+                select(Member).where(Member.telegram_id == callback.from_user.id)
+            )).scalar_one_or_none()
+            if not member or task.assignee_id != member.id:
+                await callback.answer("⛔ Только исполнитель задачи может менять её статус.", show_alert=True)
+                return
 
         task.status = "done"
         task.completed_at = datetime.utcnow()
@@ -281,14 +290,23 @@ async def cb_task_done(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("task_progress:"))
 async def cb_task_progress(callback: CallbackQuery):
-    """Mark task as in progress."""
+    """Mark task as in progress. Only the assignee or chairman can change status."""
     task_id = int(callback.data.split(":")[1])
+    admin = is_chairman(callback.from_user.username)
 
     async with async_session() as session:
         task = await session.get(Task, task_id)
         if not task:
             await callback.answer("Задача не найдена.")
             return
+
+        if not admin:
+            member = (await session.execute(
+                select(Member).where(Member.telegram_id == callback.from_user.id)
+            )).scalar_one_or_none()
+            if not member or task.assignee_id != member.id:
+                await callback.answer("⛔ Только исполнитель задачи может менять её статус.", show_alert=True)
+                return
 
         task.status = "in_progress"
         await session.commit()

@@ -19,6 +19,7 @@ from aiogram.client.default import DefaultBotProperties
 
 from app.database import init_db
 from app.handlers import onboarding, protocol, tasks, voice, meetings, chat, stakeholder, task_verify, materials, chairman_tasks
+from app.middleware import AccessMiddleware
 from app.scheduler import run_scheduler
 
 
@@ -33,6 +34,9 @@ async def main():
         default=DefaultBotProperties(parse_mode=None),
     )
     dp = Dispatcher(storage=MemoryStorage())
+
+    # Security: block all updates from users not in the whitelist
+    dp.update.outer_middleware(AccessMiddleware())
 
     # Register handlers (order matters — chat is catch-all, must be last)
     dp.include_router(onboarding.router)

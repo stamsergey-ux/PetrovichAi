@@ -123,6 +123,10 @@ async def _parse_and_confirm(message: Message, state: FSMContext, text: str):
 
 @router.callback_query(F.data == "stk_confirm", TaskCreation.waiting_for_confirmation)
 async def confirm_task(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    if not is_stakeholder(callback.from_user.username) and not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        await state.clear()
+        return
     data = await state.get_data()
     parsed = data["parsed"]
     members_map: dict[str, int] = data["members_map"]

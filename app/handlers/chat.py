@@ -675,7 +675,7 @@ async def cb_adv_verify(callback: CallbackQuery):
         return
     await callback.answer()
     from app.handlers.task_verify import start_verification
-    await start_verification(callback.message)
+    await start_verification(callback.message, user=callback.from_user)
 
 
 @router.callback_query(F.data == "adv_agenda")

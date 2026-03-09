@@ -106,9 +106,10 @@ async def _show_task(target: Message | CallbackQuery, task: Task, total: int, in
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
-async def start_verification(message: Message):
-    """Called from chat dispatcher — start the verification flow."""
-    if not is_chairman(message.from_user.username):
+async def start_verification(message: Message, user=None):
+    """Called from chat dispatcher or inline button — start the verification flow."""
+    check_user = user or message.from_user
+    if not is_chairman(check_user.username):
         await message.answer("⛔ Верификация задач доступна только администраторам.")
         return
 
