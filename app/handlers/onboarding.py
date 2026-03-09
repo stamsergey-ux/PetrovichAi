@@ -51,6 +51,12 @@ CHAIRMAN_EXTRA = """
 
 🔑 <b>Председатель — расширенный доступ</b>
 
+📝 <b>Поставить задачу</b>
+· Нажми кнопку и опиши голосом или текстом:
+  кому, что сделать, срок и приоритет
+· Исполнитель получит уведомление с кнопкой «Принял задачу»
+· Ты получишь отбивку о подтверждении получения
+
 📂 <b>Загрузка протоколов</b>
 · Отправь .txt или .pdf без подписи — разберу и создам задачи
 · После анализа — кнопки «Подтвердить» / «Отклонить»
@@ -130,9 +136,8 @@ def _persistent_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="📋 Мои задачи"), KeyboardButton(text="📝 Протокол")],
     ]
     if is_admin:
-        buttons.append(
-            [KeyboardButton(text="⚙️ Расширенные функции")]
-        )
+        buttons.append([KeyboardButton(text="📝 Поставить задачу")])
+        buttons.append([KeyboardButton(text="⚙️ Расширенные функции")])
     buttons.append(
         [KeyboardButton(text="🔄 Перезапустить бот"), KeyboardButton(text="❓ Помощь")]
     )
