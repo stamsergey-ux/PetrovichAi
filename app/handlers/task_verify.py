@@ -82,26 +82,65 @@ def _deadline_keyboard(task_id: int) -> InlineKeyboardMarkup:
 
 
 async def _show_task(target: Message | CallbackQuery, task: Task, total: int, index: int):
-    """Show one task for member assignment."""
-    members = await _get_active_members()
+    """Show one task for verification. If AI already filled assignee+deadline — show confirm card."""
+    msg = target if isinstance(target, Message) else target.message
 
     ai_hint = ""
     if task.description and "Ответственный (из транскрипта):" in task.description:
         hint = task.description.split("Ответственный (из транскрипта):")[-1].strip()
         if hint and hint != "не определён":
-            ai_hint = f"\n🤖 AI предложил: <i>{escape(hint)}</i>"
+            ai_hint = hint
 
-    text = (
-        f"📋 <b>ВЕРИФИКАЦИЯ ЗАДАЧ</b> — {index} из {total}\n\n"
-        f"📌 <b>{escape(task.title)}</b>{ai_hint}\n"
-    )
+    header = f"📋 <b>ВЕРИФИКАЦИЯ ЗАДАЧ</b> — {index} из {total}\n\n📌 <b>{escape(task.title)}</b>\n"
     if task.context_quote:
-        text += f"💬 <i>«{escape(task.context_quote[:250])}»</i>\n"
-    text += "\n👤 Выбери исполнителя:"
+        header += f"💬 <i>«{escape(task.context_quote[:200])}»</i>\n"
 
-    keyboard = _member_keyboard(members, task.id)
-    msg = target if isinstance(target, Message) else target.message
-    await msg.answer(text, parse_mode="HTML", reply_markup=keyboard)
+    # Case 1: AI already identified assignee AND deadline — show confirm card
+    if task.assignee_id and task.deadline:
+        async with async_session() as session:
+            assignee = await session.get(Member, task.assignee_id)
+        assignee_name = (assignee.display_name or assignee.first_name or assignee.username) if assignee else "?"
+        deadline_str = task.deadline.strftime("%d.%m.%Y")
+
+        text = header
+        text += f"\n👤 <b>Исполнитель:</b> {escape(assignee_name)}"
+        if ai_hint:
+            text += f" <i>(из транскрипта: {escape(ai_hint)})</i>"
+        text += f"\n📅 <b>Срок:</b> {deadline_str}\n\n<i>Всё верно?</i>"
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"vt_ok:{task.id}"),
+                InlineKeyboardButton(text="✏️ Изменить", callback_data=f"vt_change:{task.id}"),
+            ],
+            [InlineKeyboardButton(text="🗑 Удалить задачу", callback_data=f"vt_del:{task.id}")],
+        ])
+        await msg.answer(text, parse_mode="HTML", reply_markup=keyboard)
+        return
+
+    # Case 2: Assignee identified but no deadline — skip member selection
+    if task.assignee_id and not task.deadline:
+        async with async_session() as session:
+            assignee = await session.get(Member, task.assignee_id)
+        assignee_name = (assignee.display_name or assignee.first_name or assignee.username) if assignee else "?"
+
+        text = header
+        text += f"\n👤 <b>Исполнитель:</b> {escape(assignee_name)}"
+        if ai_hint:
+            text += f" <i>(из транскрипта: {escape(ai_hint)})</i>"
+        text += "\n\n📅 Выбери срок выполнения:"
+
+        await msg.answer(text, parse_mode="HTML", reply_markup=_deadline_keyboard(task.id))
+        return
+
+    # Case 3: No assignee — show member selection grid
+    members = await _get_active_members()
+    text = header
+    if ai_hint:
+        text += f"\n🤖 AI предложил исполнителя: <i>{escape(ai_hint)}</i>"
+    text += "\n\n👤 Выбери исполнителя:"
+
+    await msg.answer(text, parse_mode="HTML", reply_markup=_member_keyboard(members, task.id))
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -125,6 +164,56 @@ async def start_verification(message: Message, user=None):
         parse_mode="HTML",
     )
     await _show_task(message, tasks[0], len(tasks), 1)
+
+
+# ── Confirm pre-filled task (assignee + deadline already set by AI) ────────────
+
+@router.callback_query(F.data.startswith("vt_ok:"))
+async def cb_confirm_prefilled(callback: CallbackQuery, bot: Bot):
+    """Chairman confirms AI-extracted assignee and deadline — mark as verified."""
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для администраторов", show_alert=True)
+        return
+
+    task_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if not task:
+            await callback.answer("Задача не найдена.")
+            return
+        task.is_verified = True
+        await session.commit()
+        task_title = task.title
+        deadline = task.deadline
+        assignee_id = task.assignee_id
+        assignee = await session.get(Member, assignee_id) if assignee_id else None
+
+    deadline_str = deadline.strftime("%d.%m.%Y") if deadline else "без срока"
+    await callback.answer("✅ Верифицировано!")
+    await callback.message.answer(
+        f"✅ <b>Задача верифицирована!</b>\n"
+        f"📌 {escape(task_title)}\n"
+        f"📅 {deadline_str}",
+        parse_mode="HTML",
+    )
+    await _notify_assignee(bot, task_id, task_title, assignee, deadline_str)
+    await _show_next(callback)
+
+
+@router.callback_query(F.data.startswith("vt_change:"))
+async def cb_change_assignee(callback: CallbackQuery):
+    """Chairman wants to change the AI-suggested assignee — show member grid."""
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для администраторов", show_alert=True)
+        return
+
+    task_id = int(callback.data.split(":")[1])
+    members = await _get_active_members()
+    await callback.answer()
+    await callback.message.answer(
+        "👤 Выбери нового исполнителя:",
+        reply_markup=_member_keyboard(members, task_id),
+    )
 
 
 # ── Step 1: Assign member ──────────────────────────────────────────────────────
