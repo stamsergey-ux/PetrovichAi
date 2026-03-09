@@ -11,7 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message,
 )
-from sqlalchemy import select, delete as sa_delete
+from sqlalchemy import select, delete as sa_delete, update as sa_update
 
 from app.database import async_session, Task, Member
 from app.utils import is_chairman
@@ -409,3 +409,68 @@ async def _show_next(callback: CallbackQuery):
         await callback.message.answer("🎉 <b>Все задачи верифицированы!</b>", parse_mode="HTML")
     else:
         await _show_task(callback, tasks[0], len(tasks), 1)
+
+
+# ── Fix verify: reset bad tasks to unverified ──────────────────────────────────
+
+@router.message(F.text.lower().in_({"/fixverify", "исправить задачи", "🔧 исправить задачи"}))
+async def cmd_fix_verify(message: Message):
+    """Reset verified tasks with no assignee or no deadline back to unverified."""
+    if not is_chairman(message.from_user.username):
+        return
+
+    async with async_session() as session:
+        # Find tasks: verified=True, status not done, AND (no assignee OR no deadline)
+        result = await session.execute(
+            select(Task).where(
+                Task.is_verified == True,
+                Task.status.notin_(["done"]),
+                Task.source == "manual",
+            )
+        )
+        all_verified = result.scalars().all()
+
+        # From meetings: any verified task with missing assignee or deadline
+        result2 = await session.execute(
+            select(Task).where(
+                Task.is_verified == True,
+                Task.status.notin_(["done"]),
+                Task.meeting_id.isnot(None),
+            )
+        )
+        meeting_tasks = result2.scalars().all()
+
+    # Combine: tasks missing assignee OR deadline
+    to_reset = [
+        t for t in all_verified + meeting_tasks
+        if t.assignee_id is None or t.deadline is None
+    ]
+    # Deduplicate by id
+    seen = set()
+    unique_to_reset = []
+    for t in to_reset:
+        if t.id not in seen:
+            seen.add(t.id)
+            unique_to_reset.append(t)
+
+    if not unique_to_reset:
+        await message.answer(
+            "✅ Все активные задачи уже имеют исполнителя и срок.\n"
+            "Нечего исправлять."
+        )
+        return
+
+    async with async_session() as session:
+        await session.execute(
+            sa_update(Task)
+            .where(Task.id.in_([t.id for t in unique_to_reset]))
+            .values(is_verified=False)
+        )
+        await session.commit()
+
+    await message.answer(
+        f"🔧 <b>Сброшено задач в очередь верификации: {len(unique_to_reset)}</b>\n\n"
+        f"Это задачи без исполнителя или без срока.\n"
+        f"Нажми «Верифицировать задачи» чтобы их разобрать.",
+        parse_mode="HTML",
+    )
