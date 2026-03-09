@@ -268,6 +268,7 @@ async def confirm_protocol(callback: CallbackQuery):
                     priority=t.get("priority", "medium"),
                     status="new",
                     deadline=deadline,
+                    is_verified=False,  # requires chairman verification
                 )
                 session.add(task)
                 tasks_created += 1

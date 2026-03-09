@@ -40,6 +40,7 @@ async def _get_tasks_summary(user_id: int | None = None) -> str:
             select(Task, Member)
             .outerjoin(Member, Task.assignee_id == Member.id)
             .where(Task.status.in_(["new", "in_progress", "overdue"]))
+            .where(Task.is_verified == True)
             .order_by(Task.deadline.asc())
         )
         result = await session.execute(query)
@@ -351,6 +352,10 @@ async def _dispatch_text(message: Message, raw_text: str):
         from app.handlers.stakeholder import _render_my_assignments
         return await _render_my_assignments(message)
 
+    if text in ("✅ верифицировать задачи", "верифицировать задачи", "верификация задач"):
+        from app.handlers.task_verify import start_verification
+        return await start_verification(message)
+
     # For everything else — AI chat with RAG
     await _ai_chat(message, override_text=raw_text)
 
@@ -370,7 +375,8 @@ async def _show_my_tasks(message: Message):
         result = await session.execute(
             select(Task).where(
                 Task.assignee_id == member.id,
-                Task.status.in_(["new", "in_progress", "overdue"])
+                Task.status.in_(["new", "in_progress", "overdue"]),
+                Task.is_verified == True,
             ).order_by(Task.deadline.asc())
         )
         tasks = result.scalars().all()
@@ -453,11 +459,17 @@ async def _send_agenda(message: Message):
 
 async def _send_dashboard(message: Message):
     async with async_session() as session:
-        all_tasks = (await session.execute(select(Task))).scalars().all()
+        all_tasks = (await session.execute(
+            select(Task).where(Task.is_verified == True)
+        )).scalars().all()
+        unverified_count = (await session.execute(
+            select(Task).where(Task.is_verified == False)
+        )).scalars().all()
         result = await session.execute(
             select(Task, Member)
             .outerjoin(Member, Task.assignee_id == Member.id)
             .where(Task.status.in_(["new", "in_progress", "overdue"]))
+            .where(Task.is_verified == True)
         )
         active_rows = result.all()
 
@@ -465,6 +477,7 @@ async def _send_dashboard(message: Message):
     new = sum(1 for t in all_tasks if t.status == "new")
     in_progress = sum(1 for t in all_tasks if t.status == "in_progress")
     done = sum(1 for t in all_tasks if t.status == "done")
+    pending_verify = len(unverified_count)
 
     now = datetime.utcnow()
     overdue = sum(
@@ -480,6 +493,8 @@ async def _send_dashboard(message: Message):
     text += f"🔵 В работе: {in_progress}\n"
     text += f"✅ Выполнено: {done}\n"
     text += f"🔴 Просрочено: {overdue}\n"
+    if pending_verify and is_chairman(message.from_user.username):
+        text += f"\n⚠️ Ожидают верификации: {pending_verify}\n"
 
     # Workload by person
     if active_rows:
@@ -545,6 +560,7 @@ async def _show_all_tasks(message: Message):
             select(Task, Member)
             .outerjoin(Member, Task.assignee_id == Member.id)
             .where(Task.status.in_(["new", "in_progress", "overdue"]))
+            .where(Task.is_verified == True)
             .order_by(Task.deadline.asc())
         )
         rows = result.all()
@@ -615,6 +631,9 @@ async def _show_advanced_menu(message: Message):
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
+            InlineKeyboardButton(text="✅ Верифицировать задачи", callback_data="adv_verify"),
+        ],
+        [
             InlineKeyboardButton(text="📌 Адженда", callback_data="adv_agenda"),
             InlineKeyboardButton(text="📊 Аналитика", callback_data="adv_analytics"),
         ],
@@ -631,6 +650,17 @@ async def _show_advanced_menu(message: Message):
         ],
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+@router.callback_query(F.data == "adv_verify")
+async def cb_adv_verify(callback: CallbackQuery):
+    """Start task verification flow."""
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Доступно администраторам", show_alert=True)
+        return
+    await callback.answer()
+    from app.handlers.task_verify import start_verification
+    await start_verification(callback.message)
 
 
 @router.callback_query(F.data == "adv_agenda")

@@ -77,6 +77,7 @@ class Task(Base):
     goal_id = Column(Integer, ForeignKey("strategic_goals.id"), nullable=True)
     source = Column(String(20), default="manual")  # manual, meeting, stakeholder
     created_by_id = Column(Integer, ForeignKey("members.id"), nullable=True)
+    is_verified = Column(Boolean, default=True)  # False for meeting tasks until chairman verifies
     created_at = Column(DateTime, default=datetime.utcnow)
 
     meeting = relationship("Meeting", back_populates="tasks")
@@ -184,6 +185,7 @@ async def _migrate_db():
                 "ALTER TABLE tasks ADD COLUMN source VARCHAR(20) DEFAULT 'manual'",
                 "ALTER TABLE tasks ADD COLUMN created_by_id INTEGER REFERENCES members(id)",
                 "ALTER TABLE meetings ADD COLUMN analysis_json TEXT",
+                "ALTER TABLE tasks ADD COLUMN is_verified BOOLEAN DEFAULT TRUE",
             ]:
                 try:
                     await db.execute(sql)
