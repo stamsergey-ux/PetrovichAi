@@ -80,13 +80,32 @@ def _review_keyboard(meeting_id: int) -> InlineKeyboardMarkup:
 
 @router.message(F.document)
 async def handle_document(message: Message, bot: Bot):
-    """Handle uploaded document (transcript from Plaud)."""
-    if not is_chairman(message.from_user.username):
-        await message.answer("⛔ Загрузка протоколов доступна только администраторам.")
+    """Handle uploaded document — route to protocol analysis or material storage."""
+    from app.handlers.materials import save_material, _is_material_file, SUPPORTED_EXTENSIONS
+
+    filename = message.document.file_name or ""
+    ext = ("." + filename.rsplit(".", 1)[-1].lower()) if "." in filename else ""
+
+    # PPTX/PPT and other non-text formats → always save as material
+    if ext in (".pptx", ".ppt", ".xlsx", ".xls", ".docx", ".doc"):
+        await save_material(message)
         return
 
-    filename = message.document.file_name or "файл"
-    await message.answer(f"📎 Получил файл \"{filename}\", обрабатываю...")
+    # PDF/TXT with a caption → save as material (user explicitly labeled it)
+    if message.caption and ext in (".pdf", ".txt", ""):
+        await save_material(message)
+        return
+
+    # PDF/TXT without caption from non-chairman → save as material
+    if not is_chairman(message.from_user.username):
+        if _is_material_file(filename):
+            await save_material(message)
+        else:
+            await message.answer("⛔ Загрузка протоколов доступна только администраторам.")
+        return
+
+    # Chairman uploads PDF/TXT without caption → protocol analysis
+    await message.answer(f"📎 Получил файл \"{filename or 'файл'}\", обрабатываю как протокол...")
 
     try:
         text = await _extract_text_from_file(message, bot)

@@ -153,6 +153,20 @@ class StrategicGoal(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class MeetingMaterial(Base):
+    """Presentation materials uploaded by board members after meetings."""
+    __tablename__ = "meeting_materials"
+
+    id = Column(Integer, primary_key=True)
+    uploader_id = Column(Integer, ForeignKey("members.id"), nullable=True)
+    meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=True)  # optional link
+    file_id = Column(String(500), nullable=False)  # Telegram file_id for retrieval
+    file_name = Column(String(500), nullable=True)
+    file_type = Column(String(20), nullable=True)  # pdf, pptx, other
+    description = Column(Text, nullable=True)  # from caption or user input
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class MeetingEmbedding(Base):
     """Stores text chunks and their embeddings for RAG search."""
     __tablename__ = "meeting_embeddings"
@@ -186,6 +200,7 @@ async def _migrate_db():
                 "ALTER TABLE tasks ADD COLUMN created_by_id INTEGER REFERENCES members(id)",
                 "ALTER TABLE meetings ADD COLUMN analysis_json TEXT",
                 "ALTER TABLE tasks ADD COLUMN is_verified BOOLEAN DEFAULT TRUE",
+                "CREATE TABLE IF NOT EXISTS meeting_materials (id INTEGER PRIMARY KEY, uploader_id INTEGER REFERENCES members(id), meeting_id INTEGER REFERENCES meetings(id), file_id VARCHAR(500) NOT NULL, file_name VARCHAR(500), file_type VARCHAR(20), description TEXT, created_at DATETIME)",
             ]:
                 try:
                     await db.execute(sql)

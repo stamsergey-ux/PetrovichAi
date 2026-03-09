@@ -356,6 +356,10 @@ async def _dispatch_text(message: Message, raw_text: str):
         from app.handlers.task_verify import start_verification
         return await start_verification(message)
 
+    if text in ("📎 материалы", "материалы", "материалы совещаний", "презентации"):
+        from app.handlers.materials import show_materials
+        return await show_materials(message)
+
     # For everything else — AI chat with RAG
     await _ai_chat(message, override_text=raw_text)
 
@@ -646,10 +650,21 @@ async def _show_advanced_menu(message: Message):
             InlineKeyboardButton(text="📊 Дашборд", callback_data="dashboard_cb"),
         ],
         [
+            InlineKeyboardButton(text="📎 Материалы совещаний", callback_data="adv_materials"),
+        ],
+        [
             InlineKeyboardButton(text="💎 Задачи акционера", callback_data="stk_all_tasks"),
         ],
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+@router.callback_query(F.data == "adv_materials")
+async def cb_adv_materials(callback: CallbackQuery):
+    """Show meeting materials."""
+    await callback.answer()
+    from app.handlers.materials import show_materials
+    await show_materials(callback.message)
 
 
 @router.callback_query(F.data == "adv_verify")
