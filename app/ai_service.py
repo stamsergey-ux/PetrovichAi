@@ -97,6 +97,7 @@ async def chat_with_context(
     user_name: str,
     context_chunks: list[str],
     tasks_summary: str,
+    user_role: str = "член совета директоров",
 ) -> str:
     """Answer user's question using meeting history and task data as context."""
     context = "\n\n---\n\n".join(context_chunks) if context_chunks else "No meeting records yet."
@@ -105,6 +106,7 @@ async def chat_with_context(
 by answering questions about meetings, tasks, and decisions.
 
 You are speaking with: {user_name}
+Their role: {user_role}
 
 MEETING HISTORY (relevant excerpts):
 {context}

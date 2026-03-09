@@ -749,9 +749,17 @@ async def cb_adv_schedule(callback: CallbackQuery):
 
 async def _ai_chat(message: Message, override_text: str | None = None):
     """Handle free-form AI chat with RAG context."""
+    from app.utils import is_stakeholder
     user = message.from_user
     user_name = user.first_name or user.username or "Пользователь"
     user_text = override_text or message.text
+
+    if is_chairman(user.username):
+        user_role = "Председатель совета директоров"
+    elif is_stakeholder(user.username):
+        user_role = "Акционер"
+    else:
+        user_role = "Член совета директоров"
 
     # Search relevant meeting chunks
     chunks = await search_relevant_chunks(user_text, limit=5)
@@ -764,6 +772,7 @@ async def _ai_chat(message: Message, override_text: str | None = None):
         user_name=user_name,
         context_chunks=chunks,
         tasks_summary=tasks_summary,
+        user_role=user_role,
     )
 
     # Split long responses
