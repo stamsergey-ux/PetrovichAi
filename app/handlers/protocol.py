@@ -343,20 +343,17 @@ async def confirm_protocol(callback: CallbackQuery):
 
         result_text = f"✅ Протокол сохранён!\n\n"
         result_text += f"📝 {analysis.get('title', '')}\n"
-        result_text += f"📋 Задач создано: {tasks_created}\n"
+        result_text += f"📋 Задач создано: {tasks_created} — ожидают верификации\n"
         if tasks_completed:
             result_text += f"✅ Задач закрыто по итогам встречи: {tasks_completed}\n"
         if tasks_updated:
             result_text += f"🔄 Обновлено статусов: {tasks_updated}\n"
         if tasks_unassigned:
-            result_text += f"⚠️ Без ответственного: {tasks_unassigned}\n"
-        result_text += f"\n🔔 Уведомления отправлены участникам."
+            result_text += f"⚠️ Без ответственного: {tasks_unassigned} — назначь исполнителя при верификации\n"
+        result_text += f"\n📋 Нажми «Верифицировать задачи», чтобы назначить исполнителей и сроки."
 
         await callback.message.answer(result_text)
         await callback.answer("Подтверждено!")
-
-        # Notify assignees
-        await _notify_assignees(callback.bot, meeting.id)
 
     except Exception as e:
         logger.error(f"Error confirming protocol: {traceback.format_exc()}")

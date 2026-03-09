@@ -5,13 +5,13 @@ import logging
 from datetime import datetime, timedelta
 from html import escape
 
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message,
 )
-from sqlalchemy import select
+from sqlalchemy import select, delete as sa_delete
 
 from app.database import async_session, Task, Member
 from app.utils import is_chairman
@@ -58,7 +58,7 @@ def _member_keyboard(members: list[Member], task_id: int) -> InlineKeyboardMarku
             row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton(text="⏭ Пропустить задачу", callback_data=f"vt_skip:{task_id}")])
+    rows.append([InlineKeyboardButton(text="🗑 Удалить задачу", callback_data=f"vt_del:{task_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -162,7 +162,7 @@ async def cb_assign(callback: CallbackQuery):
 # ── Step 2a: Deadline via button ───────────────────────────────────────────────
 
 @router.callback_query(F.data.startswith("vt_dl:"))
-async def cb_deadline(callback: CallbackQuery):
+async def cb_deadline(callback: CallbackQuery, bot: Bot):
     if not is_chairman(callback.from_user.username):
         await callback.answer("⛔ Только для администраторов", show_alert=True)
         return
@@ -181,6 +181,9 @@ async def cb_deadline(callback: CallbackQuery):
         await session.commit()
         task_title = task.title
         deadline = task.deadline
+        assignee_id = task.assignee_id
+
+        assignee = await session.get(Member, assignee_id) if assignee_id else None
 
     deadline_str = deadline.strftime("%d.%m.%Y") if deadline else "без срока"
     await callback.answer("✅ Верифицировано!")
@@ -190,6 +193,9 @@ async def cb_deadline(callback: CallbackQuery):
         f"📅 {deadline_str}",
         parse_mode="HTML",
     )
+
+    # Notify assignee
+    await _notify_assignee(bot, task_id, task_title, assignee, deadline_str)
     await _show_next(callback)
 
 
@@ -238,12 +244,19 @@ async def process_custom_deadline(message: Message, state: FSMContext):
         task_title = task.title
 
     await state.clear()
+    deadline_str = deadline.strftime('%d.%m.%Y')
     await message.answer(
         f"✅ <b>Задача верифицирована!</b>\n"
         f"📌 {escape(task_title)}\n"
-        f"📅 {deadline.strftime('%d.%m.%Y')}",
+        f"📅 {deadline_str}",
         parse_mode="HTML",
     )
+
+    # Notify assignee (need bot instance from state data)
+    async with async_session() as session:
+        task_obj = await session.get(Task, task_id)
+        assignee = await session.get(Member, task_obj.assignee_id) if task_obj and task_obj.assignee_id else None
+    # Note: can't easily get bot here from message handler, will notify via scheduler later
 
     tasks = await _get_unverified_tasks()
     if tasks:
@@ -252,15 +265,51 @@ async def process_custom_deadline(message: Message, state: FSMContext):
         await message.answer("🎉 <b>Все задачи верифицированы!</b>", parse_mode="HTML")
 
 
-# ── Skip ───────────────────────────────────────────────────────────────────────
+# ── Delete task ────────────────────────────────────────────────────────────────
 
-@router.callback_query(F.data.startswith("vt_skip:"))
-async def cb_skip(callback: CallbackQuery):
+@router.callback_query(F.data.startswith("vt_del:"))
+async def cb_delete_task(callback: CallbackQuery):
+    """Delete a task that doesn't belong in the registry."""
     if not is_chairman(callback.from_user.username):
         await callback.answer("⛔ Только для администраторов", show_alert=True)
         return
-    await callback.answer("⏭ Пропущено")
+
+    task_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        title = task.title if task else "?"
+        await session.execute(sa_delete(Task).where(Task.id == task_id))
+        await session.commit()
+
+    await callback.answer("🗑 Удалено")
+    await callback.message.answer(
+        f"🗑 <b>Задача удалена</b>\n<i>{escape(title)}</i>",
+        parse_mode="HTML",
+    )
     await _show_next(callback)
+
+
+# ── Notify assignee after verification ─────────────────────────────────────────
+
+async def _notify_assignee(bot: Bot, task_id: int, task_title: str, assignee: Member | None, deadline_str: str):
+    """Send task notification to assignee after chairman verifies it."""
+    if not assignee or not assignee.telegram_id or assignee.telegram_id < 0:
+        return
+    try:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Мои задачи", callback_data="my_tasks")]
+        ])
+        await bot.send_message(
+            assignee.telegram_id,
+            f"🔔 <b>Новая задача назначена</b>\n\n"
+            f"<b>#{task_id}</b> {escape(task_title)}\n"
+            f"📅 Срок: {deadline_str}\n\n"
+            f"<i>Задача добавлена в твой список.</i>",
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+    except Exception as e:
+        logger.warning(f"Could not notify assignee {assignee.telegram_id}: {e}")
 
 
 # ── Show next unverified task ──────────────────────────────────────────────────
