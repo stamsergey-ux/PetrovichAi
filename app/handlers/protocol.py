@@ -15,6 +15,7 @@ from app.database import async_session, Meeting, Task, Member, compute_transcrip
 from app.ai_service import analyze_transcript
 from app.rag import store_meeting_chunks
 from app.utils import is_chairman
+from app.handlers.task_verify import start_verification
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -379,23 +380,24 @@ async def confirm_protocol(callback: CallbackQuery):
 
         result_text = f"✅ Протокол сохранён!\n\n"
         result_text += f"📝 {analysis.get('title', '')}\n"
-        result_text += f"📋 Задач создано: {tasks_created} — ожидают верификации\n"
+        result_text += f"📋 Задач создано: {tasks_created}\n"
         if tasks_completed:
             result_text += f"✅ Задач закрыто по итогам встречи: {tasks_completed}\n"
         if tasks_updated:
             result_text += f"🔄 Обновлено статусов: {tasks_updated}\n"
         if tasks_unassigned:
-            result_text += f"⚠️ Без ответственного: {tasks_unassigned} — назначь исполнителя при верификации\n"
+            result_text += f"⚠️ Без исполнителя: {tasks_unassigned} — назначь ниже\n"
         if tasks_skipped_dup:
-            result_text += f"\n🔁 Пропущено дублей: {len(tasks_skipped_dup)}\n"
-            for new_t, existing_t in tasks_skipped_dup[:5]:
-                result_text += f"  — «{new_t[:60]}»\n    уже есть: «{existing_t[:60]}»\n"
-            if len(tasks_skipped_dup) > 5:
-                result_text += f"  ... и ещё {len(tasks_skipped_dup) - 5}\n"
-        result_text += f"\n📋 Нажми «Верифицировать задачи», чтобы назначить исполнителей и сроки."
+            result_text += f"🔁 Пропущено дублей: {len(tasks_skipped_dup)}\n"
+            for new_t, existing_t in tasks_skipped_dup[:3]:
+                result_text += f"  — «{new_t[:50]}»\n"
 
         await callback.message.answer(result_text)
         await callback.answer("Подтверждено!")
+
+        # Immediately start verification for the newly created tasks
+        if tasks_created > 0:
+            await start_verification(callback.message, user=callback.from_user)
 
     except Exception as e:
         logger.error(f"Error confirming protocol: {traceback.format_exc()}")
