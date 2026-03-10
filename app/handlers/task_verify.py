@@ -13,7 +13,7 @@ from aiogram.types import (
 )
 from sqlalchemy import select, delete as sa_delete, update as sa_update
 
-from app.database import async_session, Task, Member
+from app.database import async_session, Task, Member, Meeting, MeetingEmbedding, compute_transcript_hash
 from app.utils import is_chairman
 
 logger = logging.getLogger(__name__)
@@ -474,3 +474,69 @@ async def cmd_fix_verify(message: Message):
         f"Нажми «Верифицировать задачи» чтобы их разобрать.",
         parse_mode="HTML",
     )
+
+
+# ── Clean duplicate meetings ───────────────────────────────────────────────────
+
+@router.message(F.text.lower().in_({
+    "/cleandups", "очисти дубли", "очистить дубли",
+    "очисти дублирующие протоколы", "очистить дублирующие протоколы",
+}))
+async def cmd_clean_dups(message: Message):
+    """Delete duplicate meetings — keep the confirmed one or the latest. Chairman only."""
+    if not is_chairman(message.from_user.username):
+        return
+
+    await message.answer("🔍 Ищу дублирующие протоколы...")
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Meeting).order_by(Meeting.created_at.asc())
+        )
+        all_meetings: list[Meeting] = result.scalars().all()
+
+    if not all_meetings:
+        await message.answer("Протоколов в базе нет.")
+        return
+
+    # Group by normalized title (strip, lower)
+    from collections import defaultdict
+    groups: dict[str, list[Meeting]] = defaultdict(list)
+    for m in all_meetings:
+        key = (m.title or "").strip().lower()
+        if not key:
+            key = f"__no_title_{m.id}"
+        groups[key].append(m)
+
+    to_delete: list[Meeting] = []
+    for key, group in groups.items():
+        if len(group) == 1:
+            continue
+        # Keep: confirmed first, then latest created_at
+        confirmed = [m for m in group if m.is_confirmed]
+        keep = confirmed[-1] if confirmed else sorted(group, key=lambda m: m.created_at)[-1]
+        for m in group:
+            if m.id != keep.id:
+                to_delete.append(m)
+
+    if not to_delete:
+        await message.answer("✅ Дублирующих протоколов не найдено.")
+        return
+
+    deleted_ids = [m.id for m in to_delete]
+    deleted_titles = [(m.title or "Без названия")[:60] for m in to_delete]
+
+    async with async_session() as session:
+        await session.execute(sa_delete(Task).where(Task.meeting_id.in_(deleted_ids)))
+        await session.execute(sa_delete(MeetingEmbedding).where(MeetingEmbedding.meeting_id.in_(deleted_ids)))
+        await session.execute(sa_delete(Meeting).where(Meeting.id.in_(deleted_ids)))
+        await session.commit()
+
+    report = f"🗑 <b>Удалено дублей: {len(to_delete)}</b>\n\n"
+    for title in deleted_titles[:10]:
+        report += f"  — {escape(title)}\n"
+    if len(deleted_titles) > 10:
+        report += f"  ... и ещё {len(deleted_titles) - 10}\n"
+    report += "\n✅ В базе остались только уникальные протоколы."
+
+    await message.answer(report, parse_mode="HTML")
