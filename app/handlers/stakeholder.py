@@ -75,18 +75,22 @@ async def _parse_and_confirm(message: Message, state: FSMContext, text: str):
     """Parse task text with AI and show confirmation card."""
     await message.answer("🤖 Разбираю задачу...")
 
+    state_data = await state.get_data()
+    previous_parsed = state_data.get("parsed") if state_data.get("is_correction") else None
+
     async with async_session() as session:
         members = (await session.execute(
             select(Member).where(Member.is_active == True)
         )).scalars().all()
 
     members_list = ", ".join(m.name for m in members)
-    parsed = await parse_stakeholder_task(text, members_list)
+    parsed = await parse_stakeholder_task(text, members_list, previous_parsed=previous_parsed)
 
     # Store in FSM state
     await state.update_data(
         parsed=parsed,
-        original_text=text,
+        original_text=state_data.get("original_text", text) if previous_parsed else text,
+        is_correction=False,
         members_map={m.name: m.id for m in members},
         members_tg={m.id: m.telegram_id for m in members},
     )
@@ -219,10 +223,12 @@ async def confirm_task(callback: CallbackQuery, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data == "stk_retry")
 async def retry_task(callback: CallbackQuery, state: FSMContext):
+    # Keep parsed data — next message will be treated as a correction
+    await state.update_data(is_correction=True)
     await state.set_state(TaskCreation.waiting_for_description)
     await callback.answer()
     await callback.message.answer(
-        "✏️ Опишите задачу заново — голосом или текстом:",
+        "✏️ Что исправить? Скажи или напиши — изменю только то, что укажешь:",
     )
 
 

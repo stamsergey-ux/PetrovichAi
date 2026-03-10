@@ -130,9 +130,31 @@ USER QUESTION: {user_message}"""
     return response.content[0].text
 
 
-async def parse_stakeholder_task(text: str, members_list: str) -> dict:
+async def parse_stakeholder_task(text: str, members_list: str, previous_parsed: dict | None = None) -> dict:
     """Parse a stakeholder's task description into structured fields."""
-    prompt = f"""You are an AI secretary for a Board of Directors.
+    if previous_parsed:
+        prompt = f"""You are an AI secretary for a Board of Directors.
+A task already exists and the user wants to CORRECT or ADD details to it.
+Apply only the changes the user describes — keep everything else from the existing task unchanged.
+
+Known board members: {members_list}
+Today: {datetime.now().strftime('%Y-%m-%d')}
+
+EXISTING TASK:
+{{
+  "title": "{previous_parsed.get('title', '')}",
+  "description": "{previous_parsed.get('description', '')}",
+  "assignee_name": "{previous_parsed.get('assignee_name', '')}",
+  "deadline": "{previous_parsed.get('deadline', '')}",
+  "priority": "{previous_parsed.get('priority', 'high')}"
+}}
+
+USER CORRECTION: {text}
+
+Return the updated task as JSON with the same fields.
+Only change fields explicitly mentioned in the correction. Keep all other fields exactly as in the existing task."""
+    else:
+        prompt = f"""You are an AI secretary for a Board of Directors.
 A shareholder/stakeholder has described a task they want to assign. Extract the structured fields.
 
 Known board members: {members_list}
