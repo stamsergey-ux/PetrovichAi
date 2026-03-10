@@ -11,7 +11,7 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy import select
 
-from app.database import async_session, Meeting, Task, Member
+from app.database import async_session, Meeting, Task, Member, compute_transcript_hash
 from app.ai_service import analyze_transcript
 from app.rag import store_meeting_chunks
 from app.utils import is_chairman
@@ -137,6 +137,24 @@ async def handle_long_text(message: Message):
 
 async def _process_transcript(message: Message, transcript: str, source_name: str):
     """Process transcript through AI and present for review."""
+    # ── Dedup check: reject if same transcript already exists ────────────────
+    t_hash = compute_transcript_hash(transcript)
+    async with async_session() as session:
+        existing = (await session.execute(
+            select(Meeting).where(Meeting.transcript_hash == t_hash)
+        )).scalar_one_or_none()
+    if existing:
+        status = "подтверждён" if existing.is_confirmed else "ожидает подтверждения"
+        await message.answer(
+            f"⚠️ <b>Этот протокол уже загружен</b>\n\n"
+            f"📌 {existing.title or 'Без названия'}\n"
+            f"📅 {existing.date.strftime('%d.%m.%Y')}\n"
+            f"Статус: {status}\n\n"
+            f"<i>Дублирование заблокировано.</i>",
+            parse_mode="HTML",
+        )
+        return
+
     members_list = await _get_members_list()
 
     await message.answer("🤖 Анализирую транскрипт через AI... Это может занять до минуты.")
@@ -173,6 +191,7 @@ async def _process_transcript(message: Message, transcript: str, source_name: st
             agenda_items_next=json.dumps(analysis.get("agenda_next", []), ensure_ascii=False),
             analysis_json=json.dumps(analysis, ensure_ascii=False),
             is_confirmed=False,
+            transcript_hash=t_hash,
         )
         session.add(meeting)
         await session.commit()
@@ -256,16 +275,33 @@ async def confirm_protocol(callback: CallbackQuery):
             meeting.analysis_json = None  # free up space
             await session.flush()
 
-            # Save tasks
+            # Save tasks (with dedup check)
             tasks_created = 0
             tasks_unassigned = 0
+            tasks_skipped_dup = []
+
+            # Load all open tasks for similarity check
+            open_tasks_result = await session.execute(
+                select(Task).where(Task.status.notin_(["done"]))
+            )
+            existing_open_tasks = open_tasks_result.scalars().all()
+
+            all_members_result = await session.execute(select(Member))
+            all_members = all_members_result.scalars().all()
+
             for t in analysis.get("tasks", []):
+                new_title = t.get("title", "")
+
+                # Check similarity against existing open tasks
+                dup_of = _find_duplicate_task(new_title, existing_open_tasks)
+                if dup_of:
+                    tasks_skipped_dup.append((new_title, dup_of.title))
+                    continue
+
                 assignee = None
                 assignee_name = t.get("assignee_name") or "не определён"
 
                 if assignee_name and assignee_name != "не определён":
-                    result = await session.execute(select(Member))
-                    all_members = result.scalars().all()
                     assignee = _fuzzy_match_member(assignee_name, all_members)
 
                 if not assignee:
@@ -281,7 +317,7 @@ async def confirm_protocol(callback: CallbackQuery):
                 task = Task(
                     meeting_id=meeting.id,
                     assignee_id=assignee.id if assignee else None,
-                    title=t["title"],
+                    title=new_title,
                     description=f"Ответственный (из транскрипта): {assignee_name}",
                     context_quote=t.get("context_quote"),
                     priority=t.get("priority", "medium"),
@@ -350,6 +386,12 @@ async def confirm_protocol(callback: CallbackQuery):
             result_text += f"🔄 Обновлено статусов: {tasks_updated}\n"
         if tasks_unassigned:
             result_text += f"⚠️ Без ответственного: {tasks_unassigned} — назначь исполнителя при верификации\n"
+        if tasks_skipped_dup:
+            result_text += f"\n🔁 Пропущено дублей: {len(tasks_skipped_dup)}\n"
+            for new_t, existing_t in tasks_skipped_dup[:5]:
+                result_text += f"  — «{new_t[:60]}»\n    уже есть: «{existing_t[:60]}»\n"
+            if len(tasks_skipped_dup) > 5:
+                result_text += f"  ... и ещё {len(tasks_skipped_dup) - 5}\n"
         result_text += f"\n📋 Нажми «Верифицировать задачи», чтобы назначить исполнителей и сроки."
 
         await callback.message.answer(result_text)
@@ -385,6 +427,28 @@ def _fuzzy_match_member(name: str, members: list) -> Member | None:
                     return m
 
     return None
+
+
+def _find_duplicate_task(new_title: str, existing_tasks: list) -> object | None:
+    """Return the most similar existing open task if Jaccard similarity > 0.55, else None."""
+    if not new_title or not existing_tasks:
+        return None
+    words_new = set(new_title.lower().split())
+    if not words_new:
+        return None
+    best_score = 0.0
+    best_task = None
+    for task in existing_tasks:
+        words_ex = set((task.title or "").lower().split())
+        if not words_ex:
+            continue
+        intersection = words_new & words_ex
+        union = words_new | words_ex
+        score = len(intersection) / len(union)
+        if score > best_score:
+            best_score = score
+            best_task = task
+    return best_task if best_score >= 0.55 else None
 
 
 @router.callback_query(F.data.startswith("reject_protocol:"))

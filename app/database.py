@@ -1,3 +1,4 @@
+import hashlib
 import os
 from datetime import datetime
 
@@ -55,6 +56,7 @@ class Meeting(Base):
     agenda_items_next = Column(Text, nullable=True)  # items for next meeting agenda (JSON)
     is_confirmed = Column(Boolean, default=False)
     analysis_json = Column(Text, nullable=True)  # raw AI analysis, cleared after confirm
+    transcript_hash = Column(String(16), nullable=True, unique=False)  # for dedup detection
     created_at = Column(DateTime, default=datetime.utcnow)
 
     tasks = relationship("Task", back_populates="meeting")
@@ -180,6 +182,12 @@ class MeetingEmbedding(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+def compute_transcript_hash(text: str) -> str:
+    """Normalized hash of transcript text for deduplication."""
+    normalized = " ".join(text.lower().split())
+    return hashlib.sha256(normalized.encode()).hexdigest()[:16]
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -200,6 +208,7 @@ async def _migrate_db():
                 "ALTER TABLE tasks ADD COLUMN created_by_id INTEGER REFERENCES members(id)",
                 "ALTER TABLE meetings ADD COLUMN analysis_json TEXT",
                 "ALTER TABLE tasks ADD COLUMN is_verified BOOLEAN DEFAULT TRUE",
+                "ALTER TABLE meetings ADD COLUMN transcript_hash VARCHAR(16)",
                 "CREATE TABLE IF NOT EXISTS meeting_materials (id INTEGER PRIMARY KEY, uploader_id INTEGER REFERENCES members(id), meeting_id INTEGER REFERENCES meetings(id), file_id VARCHAR(500) NOT NULL, file_name VARCHAR(500), file_type VARCHAR(20), description TEXT, created_at DATETIME)",
             ]:
                 try:
