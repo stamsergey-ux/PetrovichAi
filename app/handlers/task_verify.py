@@ -478,10 +478,10 @@ async def cmd_fix_verify(message: Message):
 
 # ── Clean duplicate meetings ───────────────────────────────────────────────────
 
-@router.message(F.text.lower().in_({
-    "/cleandups", "очисти дубли", "очистить дубли",
-    "очисти дублирующие протоколы", "очистить дублирующие протоколы",
-}))
+@router.message(
+    F.text.regexp(r"(?i)(\/cleandups|удал[ии]|очист[аи]|убер[иеёшь]+).*(дубл|протокол)")
+    | F.text.lower().in_({"очисти дубли", "очистить дубли", "удали дубли", "/cleandups"})
+)
 async def cmd_clean_dups(message: Message):
     """Delete duplicate meetings — keep the confirmed one or the latest. Chairman only."""
     if not is_chairman(message.from_user.username):
