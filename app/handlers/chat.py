@@ -313,7 +313,8 @@ async def _dispatch_text(message: Message, raw_text: str):
 
     # Quick command detection (including persistent keyboard button texts)
     if text in ("мои задачи", "мои задачи?", "какие у меня задачи", "какие у меня задачи?",
-                "📋 мои задачи"):
+                "📋 мои задачи", "подробное описание", "дай подробное описание",
+                "подробнее о задачах", "покажи задачи", "мои задачи подробно"):
         return await _show_my_tasks(message)
 
     if text in ("протокол", "последний протокол", "📝 протокол"):
@@ -747,6 +748,30 @@ async def cb_adv_schedule(callback: CallbackQuery):
     )
 
 
+async def _get_my_tasks_summary(telegram_id: int) -> str | None:
+    """Get tasks assigned to the specific user."""
+    async with async_session() as session:
+        member = (await session.execute(
+            select(Member).where(Member.telegram_id == telegram_id)
+        )).scalar_one_or_none()
+        if not member:
+            return None
+        result = await session.execute(
+            select(Task)
+            .where(Task.assignee_id == member.id)
+            .where(Task.status.in_(["new", "in_progress", "overdue", "pending_done"]))
+            .order_by(Task.deadline.asc())
+        )
+        tasks = result.scalars().all()
+    if not tasks:
+        return "No open tasks assigned."
+    lines = []
+    for t in tasks:
+        deadline = t.deadline.strftime("%d.%m.%Y") if t.deadline else "no deadline"
+        lines.append(f"#{t.id} [{t.status}] {t.title}, deadline: {deadline}")
+    return "\n".join(lines)
+
+
 async def _ai_chat(message: Message, override_text: str | None = None):
     """Handle free-form AI chat with RAG context."""
     from app.utils import is_stakeholder
@@ -764,6 +789,7 @@ async def _ai_chat(message: Message, override_text: str | None = None):
     # Search relevant meeting chunks
     chunks = await search_relevant_chunks(user_text, limit=5)
     tasks_summary = await _get_tasks_summary()
+    my_tasks = await _get_my_tasks_summary(user.id)
 
     await message.answer("🤖 Думаю...")
 
@@ -773,6 +799,7 @@ async def _ai_chat(message: Message, override_text: str | None = None):
         context_chunks=chunks,
         tasks_summary=tasks_summary,
         user_role=user_role,
+        my_tasks_summary=my_tasks,
     )
 
     # Split long responses

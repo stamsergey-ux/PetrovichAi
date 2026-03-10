@@ -98,23 +98,32 @@ async def chat_with_context(
     context_chunks: list[str],
     tasks_summary: str,
     user_role: str = "член совета директоров",
+    my_tasks_summary: str | None = None,
 ) -> str:
     """Answer user's question using meeting history and task data as context."""
     context = "\n\n---\n\n".join(context_chunks) if context_chunks else "No meeting records yet."
+
+    my_tasks_block = ""
+    if my_tasks_summary:
+        my_tasks_block = (
+            f"\nTASKS ASSIGNED TO {user_name} (their personal tasks only):\n"
+            f"{my_tasks_summary}\n"
+        )
 
     prompt = f"""You are an AI secretary for a Board of Directors. You help board members
 by answering questions about meetings, tasks, and decisions.
 
 You are speaking with: {user_name}
 Their role: {user_role}
-
+{my_tasks_block}
 MEETING HISTORY (relevant excerpts):
 {context}
 
-CURRENT TASKS SUMMARY:
+ALL BOARD TASKS SUMMARY:
 {tasks_summary}
 
 Answer the user's question in Russian. Be concise and specific.
+IMPORTANT: When {user_name} asks about their own tasks or task details, refer ONLY to the "TASKS ASSIGNED TO {user_name}" section above, not to other people's tasks.
 If referencing a meeting, mention its date.
 If referencing a task, mention its status and deadline.
 If you don't have enough information, say so honestly.
