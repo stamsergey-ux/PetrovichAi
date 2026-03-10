@@ -182,6 +182,62 @@ class MeetingEmbedding(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+async def seed_members_from_config():
+    """Pre-populate members table from BOARD_MEMBERS config.
+    Members who haven't /start yet get a negative placeholder telegram_id.
+    When they /start, onboarding will update their real telegram_id.
+    """
+    from app.members_config import BOARD_MEMBERS
+    from sqlalchemy import select as _select
+
+    async with async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)() as session:
+        for idx, cfg in enumerate(BOARD_MEMBERS, start=1):
+            username = cfg.get("username")
+            display_name = cfg["display_name"]
+
+            # Try to find by username first, then by display_name
+            existing = None
+            if username:
+                result = await session.execute(
+                    _select(Member).where(Member.username == username)
+                )
+                existing = result.scalar_one_or_none()
+
+            if not existing:
+                result = await session.execute(
+                    _select(Member).where(Member.display_name == display_name)
+                )
+                existing = result.scalar_one_or_none()
+
+            if existing:
+                # Update display_name if it changed in config
+                if existing.display_name != display_name:
+                    existing.display_name = display_name
+                continue
+
+            # Create placeholder record — negative id won't collide with real Telegram IDs
+            placeholder_id = -(idx * 1000)
+            # Make sure placeholder doesn't collide with an existing one
+            while True:
+                check = await session.execute(
+                    _select(Member).where(Member.telegram_id == placeholder_id)
+                )
+                if not check.scalar_one_or_none():
+                    break
+                placeholder_id -= 1
+
+            member = Member(
+                telegram_id=placeholder_id,
+                username=username,
+                display_name=display_name,
+                is_chairman=cfg.get("is_chairman", False),
+                is_active=True,
+            )
+            session.add(member)
+
+        await session.commit()
+
+
 def compute_transcript_hash(text: str) -> str:
     """Normalized hash of transcript text for deduplication."""
     normalized = " ".join(text.lower().split())

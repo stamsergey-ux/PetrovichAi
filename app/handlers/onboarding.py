@@ -163,10 +163,18 @@ async def cmd_start(message: Message):
     stakeholder = is_stakeholder(user.username)
 
     async with async_session() as session:
-        existing = await session.execute(
+        # First check by telegram_id (already connected)
+        result = await session.execute(
             select(Member).where(Member.telegram_id == user.id)
         )
-        member = existing.scalar_one_or_none()
+        member = result.scalar_one_or_none()
+
+        if not member and user.username:
+            # Check if pre-seeded by username (placeholder telegram_id < 0)
+            result2 = await session.execute(
+                select(Member).where(Member.username == user.username)
+            )
+            member = result2.scalar_one_or_none()
 
         if not member:
             member = Member(
@@ -178,10 +186,22 @@ async def cmd_start(message: Message):
                 is_stakeholder=stakeholder,
             )
             session.add(member)
-            await session.commit()
-        elif stakeholder and not member.is_stakeholder:
-            member.is_stakeholder = True
-            await session.commit()
+        else:
+            # Update real telegram_id if it was a placeholder
+            if member.telegram_id != user.id:
+                member.telegram_id = user.id
+            if not member.first_name:
+                member.first_name = user.first_name
+            if not member.last_name:
+                member.last_name = user.last_name
+            if user.username:
+                member.username = user.username
+            if stakeholder and not member.is_stakeholder:
+                member.is_stakeholder = True
+            if chairman and not member.is_chairman:
+                member.is_chairman = True
+
+        await session.commit()
 
     name = user.first_name or user.username or "коллега"
 

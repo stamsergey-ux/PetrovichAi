@@ -17,7 +17,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
-from app.database import init_db
+from app.database import init_db, seed_members_from_config
 from app.handlers import onboarding, protocol, tasks, voice, meetings, chat, stakeholder, task_verify, materials, chairman_tasks
 from app.middleware import AccessMiddleware
 from app.scheduler import run_scheduler
@@ -27,6 +27,7 @@ async def main():
     # Init database
     os.makedirs("data", exist_ok=True)
     await init_db()
+    await seed_members_from_config()
 
     # Init bot
     bot = Bot(
