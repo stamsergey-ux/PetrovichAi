@@ -47,14 +47,31 @@ def _task_keyboard(task_id: int, status: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _task_list_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
+def _task_list_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup | None:
     buttons = []
     if is_admin:
         buttons.append([
+            InlineKeyboardButton(text="📋 Мои поручения", callback_data="my_assigned"),
             InlineKeyboardButton(text="👥 Все задачи", callback_data="all_tasks"),
+        ])
+        buttons.append([
             InlineKeyboardButton(text="📊 Дашборд", callback_data="dashboard_cb"),
         ])
     return InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+
+
+def _detail_buttons(task_ids: list[int]) -> list[list[InlineKeyboardButton]]:
+    """Rows of detail buttons, up to 4 per row."""
+    rows = []
+    row = []
+    for tid in task_ids:
+        row.append(InlineKeyboardButton(text=f"🔍 #{tid}", callback_data=f"task_detail:{tid}"))
+        if len(row) == 4:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return rows
 
 
 def _progress_bar(done: int, total: int, length: int = 10) -> str:
@@ -64,7 +81,14 @@ def _progress_bar(done: int, total: int, length: int = 10) -> str:
     return "▓" * filled + "░" * (length - filled)
 
 
-def _format_task_card(task: Task, assignee_name: str = "—", show_assignee: bool = True) -> str:
+def _format_task_card(
+    task: Task,
+    assignee_name: str = "—",
+    show_assignee: bool = True,
+    full: bool = False,
+    creator_name: str | None = None,
+    meeting_title: str | None = None,
+) -> str:
     status_icon = STATUS_ICON.get(task.status, "⬜")
     priority_badge = {"high": "🔥 ", "medium": "", "low": "💤 "}.get(task.priority, "")
 
@@ -85,13 +109,26 @@ def _format_task_card(task: Task, assignee_name: str = "—", show_assignee: boo
     title = escape(task.title)
     lines = [f"{status_icon} {priority_badge}<b>#{task.id}</b> {title}"]
     if show_assignee:
-        lines.append(f"    👤 {escape(assignee_name)}")
-    lines.append(f"    📅 {escape(deadline_str)}")
-    if task.context_quote:
-        quote = task.context_quote[:120]
-        if len(task.context_quote) > 120:
-            quote += "..."
-        lines.append(f'    💭 <i>{escape(quote)}</i>')
+        lines.append(f"👤 Исполнитель: {escape(assignee_name)}")
+    lines.append(f"📅 Срок: {escape(deadline_str)}")
+
+    if full:
+        if creator_name:
+            lines.append(f"📌 Поставил: {escape(creator_name)}")
+        if meeting_title:
+            lines.append(f"📋 Протокол: {escape(meeting_title)}")
+        if task.description:
+            lines.append(f"\n📝 <b>Описание:</b>\n{escape(task.description)}")
+        if task.context_quote:
+            lines.append(f'\n💭 <b>Контекст из протокола:</b>\n<i>{escape(task.context_quote)}</i>')
+        if task.completion_comment:
+            lines.append(f"\n✅ <b>Как выполнено:</b>\n{escape(task.completion_comment)}")
+    else:
+        if task.context_quote:
+            quote = task.context_quote[:120]
+            if len(task.context_quote) > 120:
+                quote += "..."
+            lines.append(f'💭 <i>{escape(quote)}</i>')
 
     return "\n".join(lines)
 
@@ -156,7 +193,13 @@ async def cb_my_tasks(callback: CallbackQuery):
     if len(text) > 4000:
         text = text[:4000] + "\n\n... <i>список обрезан</i>"
 
-    keyboard = _task_keyboard(tasks[0].id, tasks[0].status) if tasks else None
+    # Build keyboard: detail buttons + admin shortcuts
+    detail_rows = _detail_buttons([t.id for t in tasks])
+    admin_kb = _task_list_keyboard(admin)
+    admin_rows = admin_kb.inline_keyboard if admin_kb else []
+    all_rows = detail_rows + admin_rows
+    keyboard = InlineKeyboardMarkup(inline_keyboard=all_rows) if all_rows else None
+
     await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
 
@@ -198,6 +241,108 @@ async def cb_all_tasks(callback: CallbackQuery):
         text = text[:4000] + "\n\n... <i>список обрезан</i>"
 
     await callback.message.answer(text, parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("task_detail:"))
+async def cb_task_detail(callback: CallbackQuery):
+    task_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if not task:
+            await callback.answer("Задача не найдена.", show_alert=True)
+            return
+
+        assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
+        creator = await session.get(Member, task.created_by_id) if task.created_by_id else None
+        meeting = await session.get(Meeting, task.meeting_id) if task.meeting_id else None
+
+    assignee_name = assignee.name if assignee else "Не назначено"
+    creator_name = creator.name if creator else None
+    meeting_title = (meeting.title or f"Совещание {meeting.date.strftime('%d.%m.%Y')}") if meeting else None
+
+    text = f"📋 <b>Задача #{task_id}</b>\n\n"
+    text += _format_task_card(
+        task,
+        assignee_name=assignee_name,
+        show_assignee=True,
+        full=True,
+        creator_name=creator_name,
+        meeting_title=meeting_title,
+    )
+
+    admin = is_chairman(callback.from_user.username)
+    is_assignee = assignee and assignee.telegram_id == callback.from_user.id
+    keyboard = _task_keyboard(task_id, task.status) if (admin or is_assignee) else None
+
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "my_assigned")
+async def cb_my_assigned(callback: CallbackQuery):
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+
+    async with async_session() as session:
+        member = (await session.execute(
+            select(Member).where(Member.telegram_id == callback.from_user.id)
+        )).scalar_one_or_none()
+
+        if not member:
+            await callback.answer("Ты не зарегистрирован. Нажми /start")
+            return
+
+        result = await session.execute(
+            select(Task, Member)
+            .outerjoin(Member, Task.assignee_id == Member.id)
+            .where(Task.created_by_id == member.id)
+            .order_by(Task.created_at.desc())
+        )
+        rows = result.all()
+
+    if not rows:
+        await callback.message.answer(
+            "📭 <b>Нет поручений.</b>\n\nЗадачи, поставленные тобой, появятся здесь.",
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
+    by_status = {"pending_done": [], "in_progress": [], "new": [], "overdue": [], "done": []}
+    for task, member_row in rows:
+        s = task.status if task.status in by_status else "new"
+        by_status[s].append((task, member_row))
+
+    text = f"📋 <b>Мои поручения</b> — всего {len(rows)}\n\n"
+
+    def _section(label, items):
+        t = ""
+        if items:
+            t += f"{label}\n"
+            for task, m in items:
+                icon = STATUS_ICON.get(task.status, "⬜")
+                name = (m.display_name or m.first_name or m.username) if m else "Не назначено"
+                deadline = task.deadline.strftime("%d.%m") if task.deadline else "—"
+                title = escape(task.title[:55] + "..." if len(task.title) > 55 else task.title)
+                t += f"  {icon} <b>#{task.id}</b> {title}\n"
+                t += f"      👤 {escape(name)} · 📅 {deadline}\n"
+        return t
+
+    text += _section("🟡 <b>ОЖИДАЮТ ПОДТВЕРЖДЕНИЯ</b>", by_status["pending_done"])
+    text += _section("🔴 <b>ПРОСРОЧЕНО</b>", by_status["overdue"])
+    text += _section("🔵 <b>В РАБОТЕ</b>", by_status["in_progress"])
+    text += _section("⬜ <b>НОВЫЕ</b>", by_status["new"])
+    text += _section("✅ <b>ВЫПОЛНЕНО</b>", by_status["done"])
+
+    if len(text) > 4000:
+        text = text[:4000] + "\n\n... <i>список обрезан</i>"
+
+    detail_rows = _detail_buttons([t.id for t, _ in rows[:20]])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=detail_rows) if detail_rows else None
+
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
 
 
