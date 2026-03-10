@@ -366,7 +366,11 @@ async def _dispatch_text(message: Message, raw_text: str):
 
 
 async def _show_my_tasks(message: Message):
+    from html import escape
+    from app.handlers.tasks import _detail_buttons, _task_list_keyboard, _format_task_card, STATUS_ICON
+
     user_id = message.from_user.id
+    admin = is_chairman(message.from_user.username)
 
     async with async_session() as session:
         member = (await session.execute(
@@ -380,45 +384,54 @@ async def _show_my_tasks(message: Message):
         result = await session.execute(
             select(Task).where(
                 Task.assignee_id == member.id,
-                Task.status.in_(["new", "in_progress", "overdue"]),
-                Task.is_verified == True,
+                Task.status.in_(["new", "in_progress", "overdue", "pending_done"]),
             ).order_by(Task.deadline.asc())
         )
         tasks = result.scalars().all()
 
     if not tasks:
-        await message.answer("🎉 У тебя нет открытых задач!")
+        await message.answer(
+            "🎉 <b>Нет открытых задач!</b>\n\nВсе задачи выполнены или ещё не назначены.",
+            parse_mode="HTML",
+            reply_markup=_task_list_keyboard(admin),
+        )
         return
 
     overdue = [t for t in tasks if t.status == "overdue"]
     in_prog = [t for t in tasks if t.status == "in_progress"]
+    pending = [t for t in tasks if t.status == "pending_done"]
     new = [t for t in tasks if t.status == "new"]
 
-    text = f"📋 Твои задачи ({len(tasks)})\n\n"
+    name = escape(member.name or member.first_name or "")
+    text = f"📋 <b>Задачи: {name}</b>\n<i>{len(tasks)} открытых</i>\n"
 
     if overdue:
-        text += f"🚨 ПРОСРОЧЕНО ({len(overdue)})\n"
+        text += f"\n🚨 <b>ПРОСРОЧЕНО ({len(overdue)})</b>\n"
         for t in overdue:
-            deadline = t.deadline.strftime("%d.%m.%Y") if t.deadline else "—"
-            days = abs((t.deadline - datetime.utcnow()).days) if t.deadline else 0
-            text += f"  🔴 #{t.id} {t.title}\n"
-            text += f"      📅 {deadline} (⚠️ +{days} дн.)\n\n"
-
+            text += _format_task_card(t, show_assignee=False) + "\n\n"
     if in_prog:
-        text += f"🔵 В РАБОТЕ ({len(in_prog)})\n"
+        text += f"🔵 <b>В РАБОТЕ ({len(in_prog)})</b>\n"
         for t in in_prog:
-            deadline = t.deadline.strftime("%d.%m.%Y") if t.deadline else "без срока"
-            text += f"  🔵 #{t.id} {t.title}\n"
-            text += f"      📅 {deadline}\n\n"
-
+            text += _format_task_card(t, show_assignee=False) + "\n\n"
+    if pending:
+        text += f"🟡 <b>ОЖИДАЕТ ПОДТВЕРЖДЕНИЯ ({len(pending)})</b>\n"
+        for t in pending:
+            text += _format_task_card(t, show_assignee=False) + "\n\n"
     if new:
-        text += f"⬜ НОВЫЕ ({len(new)})\n"
+        text += f"⬜ <b>НОВЫЕ ({len(new)})</b>\n"
         for t in new:
-            deadline = t.deadline.strftime("%d.%m.%Y") if t.deadline else "без срока"
-            text += f"  ⬜ #{t.id} {t.title}\n"
-            text += f"      📅 {deadline}\n\n"
+            text += _format_task_card(t, show_assignee=False) + "\n\n"
 
-    await message.answer(text)
+    if len(text) > 4000:
+        text = text[:4000] + "\n\n... <i>список обрезан</i>"
+
+    detail_rows = _detail_buttons([t.id for t in tasks])
+    admin_kb = _task_list_keyboard(admin)
+    admin_rows = admin_kb.inline_keyboard if admin_kb else []
+    all_rows = detail_rows + admin_rows
+    keyboard = InlineKeyboardMarkup(inline_keyboard=all_rows) if all_rows else None
+
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 async def _send_gantt(message: Message, assignee_filter: str | None = None):
