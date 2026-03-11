@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -207,6 +207,152 @@ async def delete_task(task_id: int, user: str = Depends(get_current_user)):
         await session.delete(task)
         await session.commit()
     return {"ok": True}
+
+
+# ── Create task (web) ─────────────────────────────────────────────────────────
+
+class CreateTaskBody(BaseModel):
+    title: str
+    description: Optional[str] = None
+    assignee_id: Optional[int] = None
+    priority: str = "medium"
+    deadline: Optional[str] = None
+
+@app.post("/api/tasks")
+async def create_task_web(body: CreateTaskBody, user: str = Depends(get_current_user)):
+    async with async_session() as session:
+        task = Task(
+            title=body.title,
+            description=body.description or None,
+            assignee_id=body.assignee_id or None,
+            priority=body.priority,
+            deadline=datetime.fromisoformat(body.deadline) if body.deadline else None,
+            status="new",
+            source="manual",
+            is_verified=True,
+        )
+        session.add(task)
+        await session.commit()
+        await session.refresh(task)
+    return {"id": task.id, "ok": True}
+
+
+# ── Voice transcription ────────────────────────────────────────────────────────
+
+@app.post("/api/transcribe")
+async def transcribe_audio(file: UploadFile = File(...), user: str = Depends(get_current_user)):
+    import openai, tempfile, asyncio
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(500, "OPENAI_API_KEY не настроен")
+    ct = file.content_type or ""
+    ext = ".mp4" if ("mp4" in ct or "mpeg" in ct or "m4a" in ct) else ".webm"
+    content = await file.read()
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = tmp.name
+    try:
+        def _transcribe():
+            client = openai.OpenAI(api_key=api_key)
+            with open(tmp_path, "rb") as f:
+                return client.audio.transcriptions.create(model="whisper-1", file=f, language="ru")
+        result = await asyncio.to_thread(_transcribe)
+        return {"text": result.text}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    finally:
+        try: os.unlink(tmp_path)
+        except: pass
+
+
+# ── Analyze meeting transcript ─────────────────────────────────────────────────
+
+class AnalyzeMeetingBody(BaseModel):
+    title: Optional[str] = None
+    date: Optional[str] = None
+    transcript: str
+
+@app.post("/api/meetings/analyze")
+async def analyze_meeting_web(body: AnalyzeMeetingBody, user: str = Depends(get_current_user)):
+    import anthropic as _anthropic
+    api_key = os.getenv("CLAUDE_API_KEY")
+    if not api_key:
+        raise HTTPException(500, "CLAUDE_API_KEY не настроен")
+    client = _anthropic.AsyncAnthropic(api_key=api_key)
+    prompt = f"""Проанализируй транскрипт совещания и верни ТОЛЬКО JSON без лишнего текста.
+
+Транскрипт:
+{body.transcript[:8000]}
+
+JSON структура:
+{{
+  "title": "краткое название совещания",
+  "summary": "резюме 2-3 предложения",
+  "participants": "список участников через запятую",
+  "decisions": ["решение 1", "решение 2"],
+  "open_questions": ["вопрос 1"],
+  "tasks": [
+    {{"title": "задача", "description": "детали", "assignee_name": "имя или null", "deadline": "YYYY-MM-DD или null", "priority": "high|medium|low"}}
+  ]
+}}"""
+    msg = await client.messages.create(
+        model="claude-sonnet-4-6", max_tokens=4000,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    raw = msg.content[0].text.strip()
+    if "```" in raw:
+        parts = raw.split("```")
+        raw = parts[1] if len(parts) > 1 else parts[0]
+        if raw.startswith("json"): raw = raw[4:].lstrip()
+    try:
+        analysis = json.loads(raw)
+    except Exception:
+        raise HTTPException(500, "Не удалось разобрать ответ AI")
+    return {"analysis": analysis, "ok": True}
+
+
+@app.post("/api/meetings/save")
+async def save_meeting_web(body: dict, user: str = Depends(get_current_user)):
+    analysis = body.get("analysis", {})
+    transcript = body.get("transcript", "")
+    date_str = body.get("date") or datetime.utcnow().isoformat()
+    async with async_session() as session:
+        meeting = Meeting(
+            date=datetime.fromisoformat(date_str[:10]),
+            title=analysis.get("title") or body.get("title") or "Совещание",
+            raw_transcript=transcript,
+            summary=analysis.get("summary"),
+            participants=analysis.get("participants"),
+            decisions=json.dumps(analysis.get("decisions", []), ensure_ascii=False),
+            open_questions=json.dumps(analysis.get("open_questions", []), ensure_ascii=False),
+            is_confirmed=True,
+        )
+        session.add(meeting)
+        await session.flush()
+        tasks_count = 0
+        for t in analysis.get("tasks", []):
+            assignee_id = None
+            aname = t.get("assignee_name")
+            if aname and aname != "null":
+                r = await session.execute(select(Member).where(Member.display_name.ilike(f"%{aname}%")))
+                m = r.scalar_one_or_none()
+                if not m:
+                    r = await session.execute(select(Member).where(Member.first_name.ilike(f"%{aname}%")))
+                    m = r.scalar_one_or_none()
+                if m: assignee_id = m.id
+            dl = None
+            if t.get("deadline") and t["deadline"] not in (None, "null"):
+                try: dl = datetime.fromisoformat(t["deadline"])
+                except: pass
+            session.add(Task(
+                meeting_id=meeting.id, title=t["title"],
+                description=t.get("description"), assignee_id=assignee_id,
+                priority=t.get("priority", "medium"), deadline=dl,
+                status="new", source="meeting", is_verified=True,
+            ))
+            tasks_count += 1
+        await session.commit()
+    return {"meeting_id": meeting.id, "tasks_created": tasks_count, "ok": True}
 
 
 # ── Members ───────────────────────────────────────────────────────────────────
