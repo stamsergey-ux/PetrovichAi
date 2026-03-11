@@ -1313,6 +1313,7 @@ function CreateProtocolTab() {
 function VoiceTab({ members }) {
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  const [parsing, setParsing] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [duration, setDuration] = useState(0);
   const mrRef = useRef(null); const chunksRef = useRef([]); const timerRef = useRef(null);
@@ -1343,9 +1344,36 @@ function VoiceTab({ members }) {
           if(!res.ok){const e=await res.json();throw new Error(e.detail||'Ошибка транскрипции');}
           const data = await res.json();
           setTranscript(data.text);
-          setForm(f=>({...f,title:data.text.slice(0,120),description:data.text}));
-        } catch(e){alert('Ошибка расшифровки: '+e.message);}
-        finally{setTranscribing(false);}
+          setTranscribing(false);
+          // AI parse
+          setParsing(true);
+          try {
+            const pr = await fetch('/api/voice/parse',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({text:data.text})});
+            if(pr.ok){
+              const pd = await pr.json();
+              const t = pd.task||{};
+              // Try to match assignee by name
+              let aId = '';
+              if(t.assignee_name){
+                const nm = t.assignee_name.toLowerCase();
+                const found = members.find(m=>m.name.toLowerCase().includes(nm)||nm.includes(m.name.toLowerCase().split(' ')[0]));
+                if(found) aId = String(found.id);
+              }
+              setForm({
+                title: t.title||data.text.slice(0,80),
+                description: t.description||'',
+                assignee_id: aId,
+                priority: t.priority||'medium',
+                deadline: t.deadline||'',
+              });
+            } else {
+              setForm(f=>({...f,title:data.text.slice(0,80),description:''}));
+            }
+          } catch{
+            setForm(f=>({...f,title:data.text.slice(0,80),description:''}));
+          } finally{setParsing(false);}
+        } catch(e){setTranscribing(false);alert('Ошибка расшифровки: '+e.message);}
+        finally{}
       };
       mr.start(500); mrRef.current=mr;
       setDuration(0); setTranscript('');
@@ -1387,8 +1415,9 @@ function VoiceTab({ members }) {
           </>
         )}
         {transcribing&&<div><Spinner/><div style={{fontSize:13,color:'#9ca3af',marginTop:8}}>Расшифровка аудио...</div></div>}
+        {parsing&&<div><Spinner/><div style={{fontSize:13,color:'#9ca3af',marginTop:8}}>AI обрабатывает поручение...</div></div>}
       </div>
-      {transcript&&!transcribing&&(
+      {transcript&&!transcribing&&!parsing&&(
         <div className="card fade-up">
           <div className="dlabel" style={{marginBottom:8}}>Расшифровка</div>
           <div style={{fontSize:12,color:'#374151',lineHeight:1.7,background:'#f9fafb',borderRadius:8,padding:'12px',marginBottom:16,wordBreak:'break-word'}}>{transcript}</div>

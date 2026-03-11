@@ -265,6 +265,56 @@ async def transcribe_audio(file: UploadFile = File(...), user: str = Depends(get
         except: pass
 
 
+# ── Parse voice task ──────────────────────────────────────────────────────────
+
+class VoiceParseBody(BaseModel):
+    text: str
+
+@app.post("/api/voice/parse")
+async def parse_voice_task(body: VoiceParseBody, user: str = Depends(get_current_user)):
+    import anthropic as _anthropic
+    api_key = os.getenv("CLAUDE_API_KEY")
+    if not api_key:
+        raise HTTPException(500, "CLAUDE_API_KEY не настроен")
+    client = _anthropic.AsyncAnthropic(api_key=api_key)
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    prompt = f"""Из голосового поручения извлеки данные задачи. Верни ТОЛЬКО JSON, без объяснений.
+
+Сегодня: {today}
+
+Поручение: «{body.text}»
+
+Верни JSON:
+{{
+  "title": "краткое название задачи (до 80 символов)",
+  "description": "подробное описание что нужно сделать (если есть детали)",
+  "assignee_name": "имя ответственного или null",
+  "priority": "high|medium|low",
+  "deadline": "YYYY-MM-DD или null"
+}}
+
+Правила:
+- title — конкретное действие, без воды
+- description — только если есть детали сверх title, иначе null
+- priority high если есть слова: срочно, немедленно, ASAP, сегодня, важно
+- deadline — вычисли дату если сказано "до пятницы", "через неделю" и т.п.
+- assignee_name — только имя/фамилия если явно указан ответственный"""
+    msg = await client.messages.create(
+        model="claude-sonnet-4-6", max_tokens=500,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    raw = msg.content[0].text.strip()
+    if "```" in raw:
+        parts = raw.split("```")
+        raw = parts[1] if len(parts) > 1 else parts[0]
+        if raw.startswith("json"): raw = raw[4:].lstrip()
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        raise HTTPException(500, "Не удалось разобрать ответ AI")
+    return {"task": parsed, "ok": True}
+
+
 # ── Analyze meeting transcript ─────────────────────────────────────────────────
 
 class AnalyzeMeetingBody(BaseModel):
