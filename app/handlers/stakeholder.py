@@ -271,28 +271,20 @@ async def _render_my_assignments(message: Message, user_id: int | None = None):
         return
 
     total = len(rows)
-    done = sum(1 for t, _ in rows if t.status == "done")
-    open_ = sum(1 for t, _ in rows if t.status in ("new", "in_progress"))
     overdue = sum(1 for t, _ in rows if t.status == "overdue")
+    pending = sum(1 for t, _ in rows if t.status == "pending_done")
+    badges = []
+    if pending:
+        badges.append(f"🟡 {pending} ждут подтверждения")
+    if overdue:
+        badges.append(f"🚨 {overdue} просрочено")
+    badge_str = ("\n" + " · ".join(badges)) if badges else ""
 
-    text = f"💎 <b>МОИ ПОРУЧЕНИЯ</b> — {total} задач\n"
-    text += f"✅ Выполнено: {done} | 🔵 В работе: {open_} | 🔴 Просрочено: {overdue}\n\n"
+    text = f"💎 <b>МОИ ПОРУЧЕНИЯ</b> — {total} задач{badge_str}"
 
-    status_icons = {"new": "⬜", "in_progress": "🔵", "done": "✅", "overdue": "🔴"}
-    for task, assignee in rows:
-        icon = status_icons.get(task.status, "⬜")
-        dl = task.deadline.strftime("%d.%m.%Y") if task.deadline else "—"
-        assignee_name = assignee.name if assignee else "Не назначено"
-        title = escape(task.title[:60] + ("..." if len(task.title) > 60 else ""))
-        text += f"{icon} <b>#{task.id}</b> {title}\n"
-        text += f"   👤 {escape(assignee_name)} · 📅 {dl}\n\n"
-
-    if len(text) > 4000:
-        text = text[:4000] + "\n... <i>обрезано</i>"
-
-    from app.handlers.tasks import _detail_buttons
-    detail_rows = _detail_buttons([t.id for t, _ in rows[:20]])
-    keyboard = InlineKeyboardMarkup(inline_keyboard=detail_rows) if detail_rows else None
+    from app.handlers.tasks import _task_buttons
+    task_rows = _task_buttons(rows, show_assignee=True)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=task_rows) if task_rows else None
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
@@ -329,25 +321,18 @@ async def _render_stakeholder_tasks(message: Message):
         return
 
     total = len(rows)
-    done = sum(1 for t, _ in rows if t.status == "done")
     overdue = sum(1 for t, _ in rows if t.status == "overdue")
+    pending = sum(1 for t, _ in rows if t.status == "pending_done")
+    badges = []
+    if pending:
+        badges.append(f"🟡 {pending} ждут подтверждения")
+    if overdue:
+        badges.append(f"🚨 {overdue} просрочено")
+    badge_str = ("\n" + " · ".join(badges)) if badges else ""
 
-    text = f"💎 <b>ЗАДАЧИ АКЦИОНЕРА</b> — {total} шт.\n"
-    text += f"✅ Выполнено: {done} | 🔴 Просрочено: {overdue}\n\n"
+    text = f"💎 <b>ЗАДАЧИ АКЦИОНЕРА</b> — {total} шт.{badge_str}"
 
-    status_icons = {"new": "⬜", "in_progress": "🔵", "done": "✅", "overdue": "🔴"}
-    for task, assignee in rows:
-        icon = status_icons.get(task.status, "⬜")
-        dl = task.deadline.strftime("%d.%m.%Y") if task.deadline else "—"
-        assignee_name = assignee.name if assignee else "Не назначено"
-        title = escape(task.title[:60] + ("..." if len(task.title) > 60 else ""))
-        text += f"{icon} <b>#{task.id}</b> {title}\n"
-        text += f"   👤 {escape(assignee_name)} · 📅 {dl}\n\n"
-
-    if len(text) > 4000:
-        text = text[:4000] + "\n... <i>обрезано</i>"
-
-    from app.handlers.tasks import _detail_buttons
-    detail_rows = _detail_buttons([t.id for t, _ in rows[:20]])
-    keyboard = InlineKeyboardMarkup(inline_keyboard=detail_rows) if detail_rows else None
+    from app.handlers.tasks import _task_buttons
+    task_rows = _task_buttons(rows, show_assignee=True)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=task_rows) if task_rows else None
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
