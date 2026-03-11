@@ -53,6 +53,43 @@ async def _notify_assignee_tg(task_id: int, task_title: str, assignee: Member, d
         import logging
         logging.getLogger(__name__).warning(f"TG notify failed: {e}")
 
+async def _notify_chairman_tg(task_id: int, task_title: str, new_status: str, changer_email: str):
+    """Notify chairmen when a task status changes via the web panel."""
+    bot_token = os.getenv("BOT_TOKEN")
+    if not bot_token:
+        return
+    status_phrases = {
+        "in_progress": "взял(а) в работу",
+        "done": "отметил(а) выполненным",
+        "pending_done": "просит подтвердить выполнение",
+    }
+    phrase = status_phrases.get(new_status, f"изменил(а) статус → {new_status}")
+    try:
+        from aiogram import Bot
+        from html import escape
+        bot = Bot(token=bot_token)
+        name = escape(changer_email.split("@")[0])
+        msg = (
+            f"🔔 <b>Обновление задачи #{task_id}</b>\n\n"
+            f"{escape(task_title)}\n\n"
+            f"👤 <b>{name}</b> {phrase}"
+        )
+        async with async_session() as session:
+            chairmen = (await session.execute(
+                select(Member).where(Member.is_chairman == True)
+            )).scalars().all()
+        for ch in chairmen:
+            if ch.telegram_id and ch.telegram_id > 0:
+                try:
+                    await bot.send_message(ch.telegram_id, msg, parse_mode="HTML")
+                except Exception:
+                    pass
+        await bot.session.close()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Chairman TG notify failed: {e}")
+
+
 app = FastAPI(title="AI Secretary — Web", docs_url=None, redoc_url=None)
 
 app.add_middleware(
@@ -220,6 +257,8 @@ async def update_task(
     if not updates:
         raise HTTPException(400, "Нет допустимых полей для обновления")
 
+    old_status = None
+    task_title = None
     async with async_session() as session:
         task = (await session.execute(
             select(Task).where(Task.id == task_id)
@@ -227,6 +266,8 @@ async def update_task(
         if not task:
             raise HTTPException(404, "Задача не найдена")
 
+        old_status = task.status
+        task_title = task.title
         for k, v in updates.items():
             if k == "deadline" and v:
                 v = datetime.fromisoformat(v)
@@ -235,6 +276,11 @@ async def update_task(
                 task.progress_percent = 100
             setattr(task, k, v)
         await session.commit()
+
+    new_status = updates.get("status")
+    if new_status and new_status != old_status:
+        import asyncio
+        asyncio.create_task(_notify_chairman_tg(task_id, task_title, new_status, user))
 
     return {"ok": True}
 
@@ -251,6 +297,59 @@ async def delete_task(task_id: int, user: str = Depends(get_current_user)):
         await session.delete(task)
         await session.commit()
     return {"ok": True}
+
+
+# ── Task comments ─────────────────────────────────────────────────────────────
+
+@app.get("/api/tasks/{task_id}/comments")
+async def get_task_comments(task_id: int, user: str = Depends(get_current_user)):
+    async with async_session() as session:
+        result = await session.execute(
+            select(TaskComment, Member)
+            .outerjoin(Member, TaskComment.author_id == Member.id)
+            .where(TaskComment.task_id == task_id)
+            .order_by(TaskComment.created_at.asc())
+        )
+        comments = [
+            {
+                "id": c.id,
+                "text": c.text,
+                "author": (m.name if m else None) or c.author_email or "Пользователь",
+                "created_at": c.created_at.isoformat(),
+            }
+            for c, m in result.all()
+        ]
+    return {"comments": comments}
+
+
+class AddCommentBody(BaseModel):
+    text: str
+
+
+@app.post("/api/tasks/{task_id}/comments")
+async def add_task_comment(
+    task_id: int,
+    body: AddCommentBody,
+    user: str = Depends(get_current_user),
+):
+    if not body.text.strip():
+        raise HTTPException(400, "Пустой комментарий")
+    async with async_session() as session:
+        task = (await session.execute(
+            select(Task).where(Task.id == task_id)
+        )).scalar_one_or_none()
+        if not task:
+            raise HTTPException(404, "Задача не найдена")
+        comment = TaskComment(
+            task_id=task_id,
+            author_id=None,
+            author_email=user,
+            text=body.text.strip(),
+        )
+        session.add(comment)
+        await session.commit()
+        await session.refresh(comment)
+    return {"id": comment.id, "ok": True}
 
 
 # ── Create task (web) ─────────────────────────────────────────────────────────
