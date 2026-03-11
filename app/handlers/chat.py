@@ -573,12 +573,13 @@ async def _show_last_protocol(message: Message):
 async def _show_all_tasks(message: Message):
     """Show all open tasks (reply keyboard version)."""
     from html import escape
+    from app.handlers.tasks import _detail_buttons, STATUS_ICON
+
     async with async_session() as session:
         result = await session.execute(
             select(Task, Member)
             .outerjoin(Member, Task.assignee_id == Member.id)
-            .where(Task.status.in_(["new", "in_progress", "overdue"]))
-            .where(Task.is_verified == True)
+            .where(Task.status.in_(["new", "in_progress", "overdue", "pending_done"]))
             .order_by(Task.deadline.asc())
         )
         rows = result.all()
@@ -593,21 +594,25 @@ async def _show_all_tasks(message: Message):
         by_assignee.setdefault(name, []).append(task)
 
     text = f"👥 <b>Все открытые задачи</b> — {len(rows)}\n\n"
-    for assignee_name, tasks in sorted(by_assignee.items()):
-        overdue_cnt = sum(1 for t in tasks if t.status == "overdue")
+    for assignee_name, tasks_list in sorted(by_assignee.items()):
+        overdue_cnt = sum(1 for t in tasks_list if t.status == "overdue")
         badge = f" 🚨{overdue_cnt}" if overdue_cnt else ""
-        text += f"<b>{escape(assignee_name)}</b> ({len(tasks)}){badge}\n"
-        for t in tasks:
-            status_icon = {"new": "⬜", "in_progress": "🔵", "overdue": "🔴"}.get(t.status, "⬜")
+        text += f"<b>{escape(assignee_name)}</b> ({len(tasks_list)}){badge}\n"
+        for t in tasks_list:
+            icon = STATUS_ICON.get(t.status, "⬜")
             deadline = t.deadline.strftime("%d.%m") if t.deadline else "—"
             title = t.title[:55] + "..." if len(t.title) > 55 else t.title
-            text += f"  {status_icon} #{t.id} {escape(title)} · {deadline}\n"
+            text += f"  {icon} #{t.id} {escape(title)} · {deadline}\n"
         text += "\n"
 
     if len(text) > 4000:
         text = text[:4000] + "\n\n... <i>список обрезан</i>"
 
-    await message.answer(text, parse_mode="HTML")
+    all_task_ids = [task.id for task, _ in rows]
+    detail_rows = _detail_buttons(all_task_ids[:20])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=detail_rows) if detail_rows else None
+
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 async def _show_help(message: Message):

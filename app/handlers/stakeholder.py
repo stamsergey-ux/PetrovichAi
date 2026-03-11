@@ -290,7 +290,10 @@ async def _render_my_assignments(message: Message, user_id: int | None = None):
     if len(text) > 4000:
         text = text[:4000] + "\n... <i>обрезано</i>"
 
-    await message.answer(text, parse_mode="HTML")
+    from app.handlers.tasks import _detail_buttons
+    detail_rows = _detail_buttons([t.id for t, _ in rows[:20]])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=detail_rows) if detail_rows else None
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 # ── Admin: view all stakeholder tasks ────────────────────────────────────────
@@ -344,4 +347,7 @@ async def _render_stakeholder_tasks(message: Message):
     if len(text) > 4000:
         text = text[:4000] + "\n... <i>обрезано</i>"
 
-    await message.answer(text, parse_mode="HTML")
+    from app.handlers.tasks import _detail_buttons
+    detail_rows = _detail_buttons([t.id for t, _ in rows[:20]])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=detail_rows) if detail_rows else None
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)

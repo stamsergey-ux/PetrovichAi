@@ -240,7 +240,11 @@ async def cb_all_tasks(callback: CallbackQuery):
     if len(text) > 4000:
         text = text[:4000] + "\n\n... <i>список обрезан</i>"
 
-    await callback.message.answer(text, parse_mode="HTML")
+    all_task_ids = [task.id for task, _ in rows]
+    detail_rows = _detail_buttons(all_task_ids[:20])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=detail_rows) if detail_rows else None
+
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
 
 
