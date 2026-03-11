@@ -30,7 +30,7 @@ STATUS_ICON = {
 }
 
 
-def _task_keyboard(task_id: int, status: str) -> InlineKeyboardMarkup:
+def _task_keyboard(task_id: int, status: str, is_admin: bool = False) -> InlineKeyboardMarkup:
     buttons = []
     if status == "pending_done":
         buttons.append([
@@ -44,6 +44,10 @@ def _task_keyboard(task_id: int, status: str) -> InlineKeyboardMarkup:
     buttons.append([
         InlineKeyboardButton(text="💬 Комментировать", callback_data=f"task_comment:{task_id}"),
     ])
+    if is_admin:
+        buttons.append([
+            InlineKeyboardButton(text="🗑 Удалить задачу", callback_data=f"task_delete:{task_id}"),
+        ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -277,7 +281,7 @@ async def cb_task_detail(callback: CallbackQuery):
 
     admin = is_chairman(callback.from_user.username)
     is_assignee = assignee and assignee.telegram_id == callback.from_user.id
-    keyboard = _task_keyboard(task_id, task.status) if (admin or is_assignee) else None
+    keyboard = _task_keyboard(task_id, task.status, is_admin=admin) if (admin or is_assignee) else None
 
     await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
@@ -587,6 +591,76 @@ async def cb_return_task(callback: CallbackQuery, bot: Bot):
 @router.callback_query(F.data == "noop")
 async def cb_noop(callback: CallbackQuery):
     await callback.answer()
+
+
+# ── Delete task (chairman only) ────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("task_delete:"))
+async def cb_task_delete(callback: CallbackQuery):
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+
+    task_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if not task:
+            await callback.answer("Задача не найдена.", show_alert=True)
+            return
+        title = task.title[:60]
+
+    confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"task_delete_confirm:{task_id}"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="noop"),
+        ]
+    ])
+    await callback.message.answer(
+        f"🗑 <b>Удалить задачу #{task_id}?</b>\n\n<i>{escape(title)}</i>\n\nЭто действие нельзя отменить.",
+        parse_mode="HTML",
+        reply_markup=confirm_kb,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("task_delete_confirm:"))
+async def cb_task_delete_confirm(callback: CallbackQuery, bot: Bot):
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+
+    task_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if not task:
+            await callback.answer("Задача уже удалена.", show_alert=True)
+            return
+
+        title = task.title
+        assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
+
+        # Delete comments first, then task
+        from sqlalchemy import delete as sa_delete
+        await session.execute(sa_delete(TaskComment).where(TaskComment.task_id == task_id))
+        await session.delete(task)
+        await session.commit()
+
+    await callback.answer("🗑 Задача удалена")
+    await callback.message.answer(
+        f"🗑 <b>Задача #{task_id} удалена</b>\n<i>{escape(title)}</i>",
+        parse_mode="HTML",
+    )
+
+    # Notify assignee
+    if assignee and assignee.telegram_id and assignee.telegram_id > 0:
+        try:
+            await bot.send_message(
+                assignee.telegram_id,
+                f"🗑 <b>Задача #{task_id} была удалена председателем</b>\n\n<i>{escape(title)}</i>",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
 
 
 # ── In progress ────────────────────────────────────────────────────────────────
