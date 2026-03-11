@@ -57,6 +57,13 @@ async def login(body: LoginRequest):
     return {"token": token, "email": body.email.lower()}
 
 
+@app.get("/api/env-check")
+async def env_check(user: str = Depends(get_current_user)):
+    """Debug: show which env vars are set (values hidden)."""
+    keys = ["CLAUDE_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "BOT_TOKEN", "PORT"]
+    return {k: "set" if os.getenv(k) else "MISSING" for k in keys}
+
+
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/dashboard")
@@ -273,9 +280,9 @@ class VoiceParseBody(BaseModel):
 @app.post("/api/voice/parse")
 async def parse_voice_task(body: VoiceParseBody, user: str = Depends(get_current_user)):
     import anthropic as _anthropic
-    api_key = os.getenv("CLAUDE_API_KEY")
+    api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        raise HTTPException(500, "CLAUDE_API_KEY не настроен")
+        raise HTTPException(500, "CLAUDE_API_KEY не настроен в Railway")
     client = _anthropic.AsyncAnthropic(api_key=api_key)
     today = datetime.utcnow().strftime("%Y-%m-%d")
     prompt = f"""Из голосового поручения извлеки данные задачи. Верни ТОЛЬКО JSON, без объяснений.
@@ -325,9 +332,9 @@ class AnalyzeMeetingBody(BaseModel):
 @app.post("/api/meetings/analyze")
 async def analyze_meeting_web(body: AnalyzeMeetingBody, user: str = Depends(get_current_user)):
     import anthropic as _anthropic
-    api_key = os.getenv("CLAUDE_API_KEY")
+    api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        raise HTTPException(500, "CLAUDE_API_KEY не настроен")
+        raise HTTPException(500, "CLAUDE_API_KEY не настроен в Railway")
     client = _anthropic.AsyncAnthropic(api_key=api_key)
     prompt = f"""Проанализируй транскрипт совещания и верни ТОЛЬКО JSON без лишнего текста.
 
