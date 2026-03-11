@@ -140,6 +140,80 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     .spinner { width: 26px; height: 26px; border: 2.5px solid #e5e7eb; border-top-color: #4f46e5; border-radius: 50%; animation: spin 0.65s linear infinite; }
     .spinner-wrap { display: flex; justify-content: center; align-items: center; padding: 56px; }
+
+    /* ── Mobile ───────────────────────────────────────────────────────────── */
+    .mobile-nav { display: none; }
+    @media (max-width: 680px) {
+      .sidebar { display: none !important; }
+      .main { padding-bottom: 72px; }
+      .mobile-nav {
+        display: flex;
+        position: fixed;
+        bottom: 0; left: 0; right: 0;
+        background: #fff;
+        border-top: 1px solid #e5e7eb;
+        z-index: 100;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+      }
+      .mobile-nav::-webkit-scrollbar { display: none; }
+      .mnav-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        padding: 8px 10px 6px;
+        border: none;
+        background: none;
+        cursor: pointer;
+        flex: 1;
+        min-width: 52px;
+        font-family: inherit;
+        color: #9ca3af;
+        transition: color 0.12s;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .mnav-btn.active { color: #4f46e5; }
+      .mnav-label { font-size: 9px; font-weight: 500; white-space: nowrap; }
+      .mnav-btn.active .mnav-label { font-weight: 700; }
+
+      .page { padding: 14px 14px 20px; }
+      .page-title { font-size: 17px !important; }
+      .stat-grid { grid-template-columns: repeat(2, 1fr) !important; }
+      .dash-2col { grid-template-columns: 1fr !important; }
+      .member-grid { grid-template-columns: 1fr !important; }
+      .login-card { padding: 22px 18px; }
+
+      /* Task table → mobile cards */
+      .task-th { display: none !important; }
+      .task-tr {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 4px 8px !important;
+        padding: 12px 14px !important;
+        align-items: center !important;
+      }
+      .task-tr > *:nth-child(1) { order: 1; flex-shrink: 0; }
+      .task-tr > *:nth-child(2) { order: 2; flex: 1; min-width: 0; max-width: calc(100% - 24px); }
+      .task-tr > *:nth-child(3) { order: 4; font-size: 11px !important; color: #9ca3af !important; }
+      .task-tr > *:nth-child(4) { order: 3; font-size: 11px !important; }
+      .task-tr > *:nth-child(5) { order: 5; margin-left: auto; }
+
+      /* Detail panel → fullscreen overlay */
+      .detail {
+        position: fixed !important;
+        inset: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        border-radius: 0 !important;
+        max-height: 100dvh !important;
+        overflow-y: auto !important;
+        z-index: 200;
+        border: none !important;
+      }
+    }
   </style>
 </head>
 <body>
@@ -272,6 +346,29 @@ function Sidebar({ page, setPage, email, onLogout }) {
   );
 }
 
+// ── MobileNav ─────────────────────────────────────────────────────────────────
+function MobileNav({ page, setPage }) {
+  const nav = [
+    { id:'dashboard', label:'Дашборд',  icon: Ic.db    },
+    { id:'tasks',     label:'Задачи',   icon: Ic.task  },
+    { id:'workload',  label:'Нагрузка', icon: Ic.load  },
+    { id:'meetings',  label:'Протоколы',icon: Ic.doc   },
+    { id:'agenda',    label:'Совещания',icon: Ic.cal   },
+    { id:'gantt',     label:'Гант',     icon: Ic.gantt },
+    { id:'members',   label:'Участники',icon: Ic.users },
+  ];
+  return (
+    <nav className="mobile-nav">
+      {nav.map(n => (
+        <button key={n.id} className={`mnav-btn${page===n.id?' active':''}`} onClick={() => setPage(n.id)}>
+          {n.icon}
+          <span className="mnav-label">{n.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 function DashboardPage({ setPage }) {
   const [data, setData] = useState(null);
@@ -310,7 +407,7 @@ function DashboardPage({ setPage }) {
           <span>{stats.done_tasks} выполнено</span><span>{stats.total_tasks-stats.done_tasks} осталось</span>
         </div>
       </div>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+      <div className="dash-2col" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
         <div className="card">
           <div className="card-hd">Последние задачи <button className="btn btn-ghost" onClick={()=>setPage('tasks')}>Все →</button></div>
           {recent_tasks.length===0 && <div style={{ fontSize:13, color:'#9ca3af', textAlign:'center', padding:'12px 0' }}>Задач пока нет</div>}
@@ -367,8 +464,10 @@ function TasksPage() {
       <div style={{marginBottom:18}}><div className="page-title">Задачи</div><div className="page-sub">{tasks.length} задач</div></div>
       <div style={{ display:'flex', gap:18, alignItems:'flex-start' }}>
         <div style={{ flex:1, minWidth:0 }}>
-          <div className="filter-bar" style={{marginBottom:12}}>
-            {tabs.map(t=><button key={t.id} className={`ftab${filter===t.id?' active':''}`} onClick={()=>setFilter(t.id)}>{t.label}</button>)}
+          <div style={{marginBottom:12,overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none'}}>
+            <div className="filter-bar">
+              {tabs.map(t=><button key={t.id} className={`ftab${filter===t.id?' active':''}`} onClick={()=>setFilter(t.id)}>{t.label}</button>)}
+            </div>
           </div>
           {loading ? <Spinner/> : (
             <div className="task-table">
@@ -1012,6 +1111,7 @@ function App() {
     <div className="app">
       <Sidebar page={page} setPage={setPage} email={email} onLogout={()=>{localStorage.clear();setEmail(null);}}/>
       <main className="main">{pages[page]||pages.dashboard}</main>
+      <MobileNav page={page} setPage={setPage}/>
     </div>
   );
 }
