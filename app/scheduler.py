@@ -14,6 +14,7 @@ async def check_deadlines(bot: Bot):
     """Check tasks for approaching and passed deadlines. Run every hour."""
     now = datetime.utcnow()
     two_days = now + timedelta(days=2)
+    cooldown = timedelta(hours=20)  # Don't remind more than once per ~day
 
     async with async_session() as session:
         # Tasks with deadline approaching
@@ -30,6 +31,10 @@ async def check_deadlines(bot: Bot):
         approaching = result.all()
 
         for task, member in approaching:
+            # Skip if already notified within the last 20 hours
+            if task.last_notified_at and (now - task.last_notified_at) < cooldown:
+                continue
+
             days_left = (task.deadline - now).days
             if days_left <= 0:
                 msg = f"⚡ *Сегодня* срок по задаче:\n\n"
@@ -46,8 +51,11 @@ async def check_deadlines(bot: Bot):
 
             try:
                 await bot.send_message(member.telegram_id, msg)
+                task.last_notified_at = now
             except Exception:
                 pass
+
+        await session.commit()
 
         # Mark overdue tasks
         result = await session.execute(

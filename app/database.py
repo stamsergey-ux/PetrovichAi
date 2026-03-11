@@ -81,6 +81,7 @@ class Task(Base):
     created_by_id = Column(Integer, ForeignKey("members.id"), nullable=True)
     is_verified = Column(Boolean, default=True)  # False for meeting tasks until chairman verifies
     completion_comment = Column(Text, nullable=True)  # how the task was completed
+    last_notified_at = Column(DateTime, nullable=True)  # last deadline reminder sent
     created_at = Column(DateTime, default=datetime.utcnow)
 
     meeting = relationship("Meeting", back_populates="tasks")
@@ -267,6 +268,7 @@ async def _migrate_db():
                 "ALTER TABLE tasks ADD COLUMN is_verified BOOLEAN DEFAULT TRUE",
                 "ALTER TABLE meetings ADD COLUMN transcript_hash VARCHAR(16)",
                 "ALTER TABLE tasks ADD COLUMN completion_comment TEXT",
+                "ALTER TABLE tasks ADD COLUMN last_notified_at DATETIME",
                 "CREATE TABLE IF NOT EXISTS meeting_materials (id INTEGER PRIMARY KEY, uploader_id INTEGER REFERENCES members(id), meeting_id INTEGER REFERENCES meetings(id), file_id VARCHAR(500) NOT NULL, file_name VARCHAR(500), file_type VARCHAR(20), description TEXT, created_at DATETIME)",
             ]:
                 try:
