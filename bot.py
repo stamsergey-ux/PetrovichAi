@@ -29,6 +29,18 @@ async def main():
     await init_db()
     await seed_members_from_config()
 
+    # Start web panel alongside the bot
+    try:
+        import uvicorn
+        from webapp.main import app as web_app
+        port = int(os.getenv("PORT", "8080"))
+        config = uvicorn.Config(web_app, host="0.0.0.0", port=port, log_level="warning")
+        server = uvicorn.Server(config)
+        asyncio.create_task(server.serve())
+        print(f"Web panel started on port {port}")
+    except Exception as e:
+        print(f"Web panel not started: {e}")
+
     # Init bot
     bot = Bot(
         token=os.getenv("BOT_TOKEN"),

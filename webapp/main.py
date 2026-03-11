@@ -335,6 +335,70 @@ async def get_agenda_requests(user: str = Depends(get_current_user)):
     return {"requests": items}
 
 
+# ── Workload ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/workload")
+async def get_workload(user: str = Depends(get_current_user)):
+    async with async_session() as session:
+        members = (await session.execute(
+            select(Member).where(Member.is_active == True)
+        )).scalars().all()
+
+        open_rows = (await session.execute(
+            select(Task).where(Task.status.in_(["new", "in_progress", "overdue", "pending_done"]))
+        )).scalars().all()
+
+        done_tasks = (await session.execute(
+            select(Task).where(Task.status == "done")
+        )).scalars().all()
+
+    open_by_member: dict[int, list] = {}
+    for t in open_rows:
+        if t.assignee_id:
+            open_by_member.setdefault(t.assignee_id, []).append(t)
+
+    done_by_member: dict[int, int] = {}
+    for t in done_tasks:
+        if t.assignee_id:
+            done_by_member[t.assignee_id] = done_by_member.get(t.assignee_id, 0) + 1
+
+    workload = []
+    for m in members:
+        open_tasks = open_by_member.get(m.id, [])
+        sorted_tasks = sorted(
+            open_tasks,
+            key=lambda t: (t.status != "overdue", t.deadline or datetime(9999, 1, 1))
+        )
+        workload.append({
+            "member_id": m.id,
+            "name": m.name,
+            "username": m.username,
+            "is_chairman": m.is_chairman,
+            "is_stakeholder": m.is_stakeholder,
+            "open": len(open_tasks),
+            "done_total": done_by_member.get(m.id, 0),
+            "by_status": {
+                "new": sum(1 for t in open_tasks if t.status == "new"),
+                "in_progress": sum(1 for t in open_tasks if t.status == "in_progress"),
+                "overdue": sum(1 for t in open_tasks if t.status == "overdue"),
+                "pending_done": sum(1 for t in open_tasks if t.status == "pending_done"),
+            },
+            "tasks": [
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "status": t.status,
+                    "priority": t.priority,
+                    "deadline": t.deadline.isoformat() if t.deadline else None,
+                }
+                for t in sorted_tasks
+            ],
+        })
+
+    workload.sort(key=lambda x: (-x["open"], x["name"]))
+    return {"workload": workload}
+
+
 # ── Serve frontend ────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
