@@ -49,8 +49,9 @@ def verify_credentials(email: str, password: str) -> str:
     """Verify email + password, return JWT token."""
     email = email.strip().lower()
 
+    # Always enforce email whitelist if configured
     if ALLOWED_EMAILS and email not in ALLOWED_EMAILS:
-        raise HTTPException(status_code=403, detail="Email не в списке разрешённых")
+        raise HTTPException(status_code=403, detail="Этот email не имеет доступа к системе")
 
     if password != TEAM_PASSWORD:
         raise HTTPException(status_code=401, detail="Неверный пароль")
