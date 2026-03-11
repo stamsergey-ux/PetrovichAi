@@ -25,8 +25,8 @@ STATUS_ICON = {
     "new": "⬜",
     "in_progress": "🔵",
     "done": "✅",
-    "overdue": "🔴",
-    "pending_done": "🟡",
+    "overdue": "⏰",
+    "pending_done": "🔍",
 }
 
 
