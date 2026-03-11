@@ -135,6 +135,9 @@
     .login-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 30px; width: 100%; max-width: 376px; }
 
     .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .menu-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 14px; border: none; background: none; cursor: pointer; font-family: inherit; font-size: 13px; color: #374151; text-align: left; transition: background 0.1s; }
+    .menu-item:hover { background: #f9fafb; }
+    .menu-item:disabled { opacity: 0.5; cursor: not-allowed; }
     @keyframes fadeUp { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
     .fade-up { animation: fadeUp 0.2s ease forwards; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -445,50 +448,126 @@ function DashboardPage({ setPage }) {
 // ── Tasks list ────────────────────────────────────────────────────────────────
 function TasksPage() {
   const [tasks, setTasks] = useState([]); const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all'); const [sel, setSel] = useState(null); const [upd, setUpd] = useState(null);
-  const tabs = [{id:'all',label:'Все'},{id:'new',label:'Новые'},{id:'in_progress',label:'В работе'},{id:'overdue',label:'Просрочено'},{id:'done',label:'Выполнено'}];
+  const [filter, setFilter] = useState('all'); const [sort, setSort] = useState('created_desc');
+  const [sel, setSel] = useState(null); const [upd, setUpd] = useState(null); const [menu, setMenu] = useState(null);
+
+  const tabs = [{id:'all',label:'Все'},{id:'new',label:'Новые'},{id:'in_progress',label:'В работе'},{id:'overdue',label:'Просрочено'},{id:'pending_done',label:'На проверке'},{id:'done',label:'Выполнено'}];
+  const sorts = [{id:'created_desc',label:'Новые'},{id:'deadline_asc',label:'По дедлайну'},{id:'assignee',label:'По исполнителю'},{id:'priority',label:'По приоритету'}];
+
   const load = useCallback(() => {
     setLoading(true);
     api(`/api/tasks${filter!=='all'?`?status=${filter}`:''}`).then(d=>setTasks(d.tasks)).finally(()=>setLoading(false));
   }, [filter]);
   useEffect(()=>{load();},[load]);
 
+  useEffect(() => {
+    if (!menu) return;
+    const handler = () => setMenu(null);
+    const t = setTimeout(() => document.addEventListener('click', handler), 0);
+    return () => { clearTimeout(t); document.removeEventListener('click', handler); };
+  }, [menu]);
+
   async function patch(id, body) {
-    setUpd(id);
-    try { await api(`/api/tasks/${id}`,{method:'PATCH',body:JSON.stringify(body)}); load(); setSel(null); }
+    setUpd(id); setMenu(null);
+    try { await api(`/api/tasks/${id}`,{method:'PATCH',body:JSON.stringify(body)}); load(); setSel(s=>s?.id===id?null:s); }
     finally { setUpd(null); }
   }
 
+  async function deleteTask(id) {
+    if (!confirm('Удалить задачу? Это действие нельзя отменить.')) return;
+    setMenu(null);
+    try { await api(`/api/tasks/${id}`,{method:'DELETE'}); load(); setSel(s=>s?.id===id?null:s); }
+    catch(e) { alert(e.message); }
+  }
+
+  const PORDER = {high:0,medium:1,low:2};
+  const sorted = [...tasks].sort((a,b) => {
+    if (sort==='created_desc') return new Date(b.created_at)-new Date(a.created_at);
+    if (sort==='deadline_asc') { if(!a.deadline&&!b.deadline) return 0; if(!a.deadline) return 1; if(!b.deadline) return -1; return new Date(a.deadline)-new Date(b.deadline); }
+    if (sort==='assignee') return (a.assignee||'').localeCompare(b.assignee||'','ru');
+    if (sort==='priority') return (PORDER[a.priority]??1)-(PORDER[b.priority]??1);
+    return 0;
+  });
+
   return (
     <div className="page fade-up">
-      <div style={{marginBottom:18}}><div className="page-title">Задачи</div><div className="page-sub">{tasks.length} задач</div></div>
-      <div style={{ display:'flex', gap:18, alignItems:'flex-start' }}>
-        <div style={{ flex:1, minWidth:0 }}>
-          <div style={{marginBottom:12,overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none'}}>
-            <div className="filter-bar">
-              {tabs.map(t=><button key={t.id} className={`ftab${filter===t.id?' active':''}`} onClick={()=>setFilter(t.id)}>{t.label}</button>)}
-            </div>
-          </div>
-          {loading ? <Spinner/> : (
-            <div className="task-table">
-              {tasks.length===0 && <div className="empty-state"><div className="empty-text">Задач не найдено</div></div>}
-              {tasks.length>0 && <div className="task-th"><span/><span>Задача</span><span>Ответственный</span><span>Дедлайн</span><span>Статус</span></div>}
-              {tasks.map((t,i) => (
-                <div key={t.id} className={`task-tr${sel?.id===t.id?' sel':''}`} onClick={()=>setSel(t)}>
-                  <SDot s={t.status}/>
-                  <div style={{minWidth:0}}>
-                    <div className="truncate" style={{fontSize:13,fontWeight:500,color:'#111827'}}>{t.title}</div>
-                    {t.source==='stakeholder' && <span className="pill p-stakeholder" style={{marginTop:3,display:'inline-flex'}}>Акционер</span>}
+      <div style={{marginBottom:14}}><div className="page-title">Задачи</div><div className="page-sub">{tasks.length} задач</div></div>
+
+      {/* Status filter */}
+      <div style={{marginBottom:8,overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none'}}>
+        <div className="filter-bar">
+          {tabs.map(t=><button key={t.id} className={`ftab${filter===t.id?' active':''}`} onClick={()=>setFilter(t.id)}>{t.label}</button>)}
+        </div>
+      </div>
+
+      {/* Sort */}
+      <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap',marginBottom:14}}>
+        <span style={{fontSize:11,color:'#9ca3af',fontWeight:600}}>Сортировка:</span>
+        {sorts.map(s=>(
+          <button key={s.id} onClick={()=>setSort(s.id)}
+            style={{padding:'3px 10px',borderRadius:6,fontSize:11,fontWeight:500,border:'1px solid',cursor:'pointer',fontFamily:'inherit',transition:'all 0.12s',
+              background:sort===s.id?'#4f46e5':'#fff',color:sort===s.id?'#fff':'#6b7280',borderColor:sort===s.id?'#4f46e5':'#e5e7eb'}}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{display:'flex',gap:18,alignItems:'flex-start'}}>
+        <div style={{flex:1,minWidth:0}}>
+          {loading ? <Spinner/> : sorted.length===0 ? (
+            <div className="card"><div className="empty-state"><div className="empty-text">Задач не найдено</div></div></div>
+          ) : (
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {sorted.map(t=>(
+                <div key={t.id}
+                  style={{background:'#fff',border:`1px solid ${sel?.id===t.id?'#c4b5fd':'#e5e7eb'}`,borderRadius:12,padding:'14px 16px',cursor:'pointer',transition:'border-color 0.1s',boxShadow:sel?.id===t.id?'0 0 0 3px rgba(196,181,253,0.2)':'none'}}
+                  onClick={()=>setSel(sel?.id===t.id?null:t)}>
+
+                  {/* Header: dot + title + menu */}
+                  <div style={{display:'flex',alignItems:'flex-start',gap:10,marginBottom:t.description?8:10}}>
+                    <SDot s={t.status}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600,color:'#111827',lineHeight:1.45,wordBreak:'break-word'}}>{t.title}</div>
+                      {t.source==='stakeholder'&&<span className="pill p-stakeholder" style={{marginTop:4,display:'inline-flex'}}>Акционер</span>}
+                    </div>
+                    <div style={{position:'relative',flexShrink:0}} onClick={e=>e.stopPropagation()}>
+                      <button onClick={e=>{e.stopPropagation();setMenu(menu===t.id?null:t.id);}}
+                        style={{background:'none',border:'none',cursor:'pointer',padding:'2px 8px',borderRadius:6,color:'#9ca3af',fontSize:18,lineHeight:1,fontFamily:'inherit',letterSpacing:'1px'}}
+                        title="Действия">···</button>
+                      {menu===t.id&&(
+                        <div style={{position:'absolute',right:0,top:'100%',marginTop:4,background:'#fff',border:'1px solid #e5e7eb',borderRadius:10,boxShadow:'0 8px 24px rgba(0,0,0,0.12)',zIndex:50,minWidth:200,overflow:'hidden'}}>
+                          {t.status==='new'&&<button className="menu-item" onClick={()=>patch(t.id,{status:'in_progress'})} disabled={upd===t.id}>🔵 Взять в работу</button>}
+                          {t.status!=='done'&&<button className="menu-item" onClick={()=>patch(t.id,{status:'done'})} disabled={upd===t.id}>✅ Отметить выполненным</button>}
+                          {t.status==='pending_done'&&<button className="menu-item" onClick={()=>patch(t.id,{status:'done'})} disabled={upd===t.id}>✅ Подтвердить выполнение</button>}
+                          {t.status==='done'&&<button className="menu-item" onClick={()=>patch(t.id,{status:'in_progress'})} disabled={upd===t.id}>🔄 Вернуть в работу</button>}
+                          {t.status==='overdue'&&<button className="menu-item" onClick={()=>patch(t.id,{status:'in_progress'})} disabled={upd===t.id}>🔵 Возобновить</button>}
+                          <div style={{height:1,background:'#f3f4f6',margin:'2px 0'}}/>
+                          <button className="menu-item" style={{color:'#dc2626'}} onClick={()=>deleteTask(t.id)}>🗑 Удалить задачу</button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="truncate" style={{fontSize:12,color:'#6b7280'}}>{t.assignee||'—'}</div>
-                  <div style={{fontSize:12,color:t.status==='overdue'?'#dc2626':'#6b7280',fontWeight:t.status==='overdue'?600:400}}>{fmt(t.deadline)}</div>
-                  <div><SPill s={t.status}/></div>
+
+                  {/* Full description */}
+                  {t.description&&(
+                    <div style={{fontSize:12,color:'#6b7280',lineHeight:1.65,marginBottom:10,paddingLeft:19,wordBreak:'break-word'}}>{t.description}</div>
+                  )}
+
+                  {/* Meta row */}
+                  <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',paddingLeft:19}}>
+                    <SPill s={t.status}/>
+                    {t.priority&&t.priority!=='medium'&&<PPill p={t.priority}/>}
+                    {t.assignee&&<span style={{fontSize:11,color:'#6b7280'}}>👤 {t.assignee}</span>}
+                    {t.deadline&&<span style={{fontSize:11,color:t.status==='overdue'?'#dc2626':'#6b7280',fontWeight:t.status==='overdue'?600:400}}>📅 {fmt(t.deadline)}</span>}
+                    <span style={{fontSize:11,color:'#d1d5db',marginLeft:'auto'}}>#{t.id}</span>
+                  </div>
                 </div>
               ))}
             </div>
           )}
         </div>
-        {sel && (
+
+        {sel&&(
           <div className="detail fade-up">
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14,gap:8}}>
               <div style={{fontSize:13,fontWeight:700,color:'#111827',lineHeight:1.4}}>#{sel.id} {sel.title}</div>
@@ -499,16 +578,15 @@ function TasksPage() {
                 <div key={r.l} className="detail-drow"><span className="dlabel">{r.l}</span>{r.v}</div>
               ))}
             </div>
-            {sel.description && <div style={{marginTop:14}}><div className="dlabel" style={{marginBottom:6}}>Описание</div><div style={{fontSize:12,color:'#6b7280',lineHeight:1.7}}>{sel.description}</div></div>}
-            {sel.status!=='done' && (
-              <div style={{marginTop:16,display:'flex',flexDirection:'column',gap:8}}>
-                <div className="dlabel" style={{marginBottom:2}}>Действия</div>
-                {sel.status==='new' && <button className="btn btn-outline" style={{width:'100%',justifyContent:'center'}} onClick={()=>patch(sel.id,{status:'in_progress'})} disabled={upd===sel.id}>Взять в работу</button>}
-                <button className="btn btn-success" style={{width:'100%',justifyContent:'center'}} onClick={()=>patch(sel.id,{status:'done'})} disabled={upd===sel.id}>
-                  {upd===sel.id?'Обновление...':<>{Ic.chk} Отметить выполненным</>}
-                </button>
-              </div>
-            )}
+            {sel.description&&<div style={{marginTop:14}}><div className="dlabel" style={{marginBottom:6}}>Описание</div><div style={{fontSize:12,color:'#6b7280',lineHeight:1.7,wordBreak:'break-word'}}>{sel.description}</div></div>}
+            <div style={{marginTop:16,display:'flex',flexDirection:'column',gap:8}}>
+              <div className="dlabel" style={{marginBottom:2}}>Действия</div>
+              {sel.status==='new'&&<button className="btn btn-outline" style={{width:'100%',justifyContent:'center'}} onClick={()=>patch(sel.id,{status:'in_progress'})} disabled={upd===sel.id}>Взять в работу</button>}
+              {sel.status!=='done'&&<button className="btn btn-success" style={{width:'100%',justifyContent:'center'}} onClick={()=>patch(sel.id,{status:'done'})} disabled={upd===sel.id}>{upd===sel.id?'Обновление...':<>{Ic.chk} Отметить выполненным</>}</button>}
+              {sel.status==='pending_done'&&<button className="btn btn-success" style={{width:'100%',justifyContent:'center'}} onClick={()=>patch(sel.id,{status:'done'})} disabled={upd===sel.id}>✅ Подтвердить выполнение</button>}
+              {sel.status==='done'&&<button className="btn btn-outline" style={{width:'100%',justifyContent:'center'}} onClick={()=>patch(sel.id,{status:'in_progress'})} disabled={upd===sel.id}>🔄 Вернуть в работу</button>}
+              <button className="btn btn-outline" style={{width:'100%',justifyContent:'center',color:'#dc2626',borderColor:'#fecaca',marginTop:4}} onClick={()=>deleteTask(sel.id)}>🗑 Удалить задачу</button>
+            </div>
           </div>
         )}
       </div>

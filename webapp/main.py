@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete as sql_delete
 
 # Reuse existing DB models
 import sys
@@ -192,6 +192,20 @@ async def update_task(
             setattr(task, k, v)
         await session.commit()
 
+    return {"ok": True}
+
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_task(task_id: int, user: str = Depends(get_current_user)):
+    async with async_session() as session:
+        task = (await session.execute(
+            select(Task).where(Task.id == task_id)
+        )).scalar_one_or_none()
+        if not task:
+            raise HTTPException(404, "Задача не найдена")
+        await session.execute(sql_delete(TaskComment).where(TaskComment.task_id == task_id))
+        await session.delete(task)
+        await session.commit()
     return {"ok": True}
 
 
