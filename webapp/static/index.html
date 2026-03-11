@@ -148,7 +148,8 @@
     .mobile-nav { display: none; }
     @media (max-width: 680px) {
       .sidebar { display: none !important; }
-      .main { padding-bottom: 72px; }
+      .main { padding-bottom: 72px; overflow-x: hidden; }
+      .app { overflow-x: hidden; }
       .mobile-nav {
         display: flex;
         position: fixed;
@@ -182,12 +183,16 @@
       .mnav-label { font-size: 9px; font-weight: 500; white-space: nowrap; }
       .mnav-btn.active .mnav-label { font-weight: 700; }
 
-      .page { padding: 14px 14px 20px; }
+      .page { padding: 14px 14px 20px; max-width: 100%; box-sizing: border-box; }
       .page-title { font-size: 17px !important; }
-      .stat-grid { grid-template-columns: repeat(2, 1fr) !important; }
+      .page-sub { flex-wrap: wrap !important; gap: 4px 10px !important; }
+      .stat-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 8px !important; }
+      .stat-num { font-size: 28px !important; letter-spacing: -1px !important; }
+      .stat-card { padding: 14px 14px !important; }
       .dash-2col { grid-template-columns: 1fr !important; }
       .member-grid { grid-template-columns: 1fr !important; }
       .login-card { padding: 22px 18px; }
+      .card { padding: 14px !important; }
 
       /* Task table → mobile cards */
       .task-th { display: none !important; }
@@ -1079,7 +1084,7 @@ function WorkloadPage() {
       {/* Header */}
       <div style={{marginBottom:24}}>
         <div className="page-title">Загруженность команды</div>
-        <div className="page-sub" style={{display:'flex',gap:16,alignItems:'center'}}>
+        <div className="page-sub" style={{display:'flex',gap:'6px 14px',alignItems:'center',flexWrap:'wrap'}}>
           <span>{workload.length} участников</span>
           <span>·</span>
           <span>{totalOpen} открытых задач</span>
