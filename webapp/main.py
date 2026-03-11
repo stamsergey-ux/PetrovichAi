@@ -293,8 +293,9 @@ async def delete_task(task_id: int, user: str = Depends(get_current_user)):
         )).scalar_one_or_none()
         if not task:
             raise HTTPException(404, "Задача не найдена")
+        # Use raw SQL to avoid async ORM lazy-loading issues with relationships
         await session.execute(sql_delete(TaskComment).where(TaskComment.task_id == task_id))
-        await session.delete(task)
+        await session.execute(sql_delete(Task).where(Task.id == task_id))
         await session.commit()
     return {"ok": True}
 

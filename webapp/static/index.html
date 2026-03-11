@@ -240,7 +240,11 @@ async function api(path, opts = {}) {
     ...opts,
   });
   if (res.status === 401) { localStorage.clear(); window.location.reload(); return; }
-  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Ошибка'); }
+  if (!res.ok) {
+    let detail = `Ошибка ${res.status}`;
+    try { const e = await res.json(); detail = e.detail || detail; } catch {}
+    throw new Error(detail);
+  }
   return res.json();
 }
 
