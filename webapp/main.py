@@ -24,6 +24,35 @@ from app.database import (
 )
 from webapp.auth import verify_credentials, get_current_user
 
+
+async def _notify_assignee_tg(task_id: int, task_title: str, assignee: Member, deadline_str: str, creator_email: str = ""):
+    """Send Telegram notification to assignee when task is created via web."""
+    bot_token = os.getenv("BOT_TOKEN")
+    if not bot_token or not assignee or not assignee.telegram_id or assignee.telegram_id < 0:
+        return
+    try:
+        from aiogram import Bot
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        from html import escape
+        bot = Bot(token=bot_token)
+        creator_note = f"\n👤 Поставил: {escape(creator_email.split('@')[0])}" if creator_email else ""
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Мои задачи", callback_data="my_tasks")]
+        ])
+        await bot.send_message(
+            assignee.telegram_id,
+            f"🔔 <b>Новая задача назначена</b>\n\n"
+            f"<b>#{task_id}</b> {escape(task_title)}\n"
+            f"📅 Срок: {deadline_str}{creator_note}\n\n"
+            f"<i>Задача добавлена в твой список.</i>",
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+        await bot.session.close()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"TG notify failed: {e}")
+
 app = FastAPI(title="AI Secretary — Web", docs_url=None, redoc_url=None)
 
 app.add_middleware(
@@ -228,12 +257,13 @@ class CreateTaskBody(BaseModel):
 @app.post("/api/tasks")
 async def create_task_web(body: CreateTaskBody, user: str = Depends(get_current_user)):
     async with async_session() as session:
+        deadline_dt = datetime.fromisoformat(body.deadline) if body.deadline else None
         task = Task(
             title=body.title,
             description=body.description or None,
             assignee_id=body.assignee_id or None,
             priority=body.priority,
-            deadline=datetime.fromisoformat(body.deadline) if body.deadline else None,
+            deadline=deadline_dt,
             status="new",
             source="manual",
             is_verified=True,
@@ -241,6 +271,10 @@ async def create_task_web(body: CreateTaskBody, user: str = Depends(get_current_
         session.add(task)
         await session.commit()
         await session.refresh(task)
+        assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
+    deadline_str = deadline_dt.strftime("%d.%m.%Y") if deadline_dt else "без срока"
+    import asyncio
+    asyncio.create_task(_notify_assignee_tg(task.id, task.title, assignee, deadline_str, user))
     return {"id": task.id, "ok": True}
 
 
@@ -387,6 +421,7 @@ async def save_meeting_web(body: dict, user: str = Depends(get_current_user)):
         session.add(meeting)
         await session.flush()
         tasks_count = 0
+        tasks_to_notify = []
         for t in analysis.get("tasks", []):
             assignee_id = None
             aname = t.get("assignee_name")
@@ -401,14 +436,26 @@ async def save_meeting_web(body: dict, user: str = Depends(get_current_user)):
             if t.get("deadline") and t["deadline"] not in (None, "null"):
                 try: dl = datetime.fromisoformat(t["deadline"])
                 except: pass
-            session.add(Task(
+            new_task = Task(
                 meeting_id=meeting.id, title=t["title"],
                 description=t.get("description"), assignee_id=assignee_id,
                 priority=t.get("priority", "medium"), deadline=dl,
                 status="new", source="meeting", is_verified=True,
-            ))
+            )
+            session.add(new_task)
+            tasks_to_notify.append((new_task, assignee_id, dl))
             tasks_count += 1
         await session.commit()
+        # Collect assignee objects for notifications
+        notify_list = []
+        for new_task, aid, dl in tasks_to_notify:
+            await session.refresh(new_task)
+            assignee_obj = await session.get(Member, aid) if aid else None
+            notify_list.append((new_task.id, new_task.title, assignee_obj, dl))
+    import asyncio
+    for tid, ttitle, assignee_obj, dl in notify_list:
+        dl_str = dl.strftime("%d.%m.%Y") if dl else "без срока"
+        asyncio.create_task(_notify_assignee_tg(tid, ttitle, assignee_obj, dl_str, user))
     return {"meeting_id": meeting.id, "tasks_created": tasks_count, "ok": True}
 
 
