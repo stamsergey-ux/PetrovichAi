@@ -22,7 +22,7 @@ from app.database import (
     async_session, init_db,
     Member, Meeting, Task, TaskComment, ScheduledMeeting, AgendaRequest,
 )
-from webapp.auth import verify_credentials, get_current_user
+from webapp.auth import verify_credentials, get_current_user, is_chairman_email
 
 
 async def _notify_assignee_tg(task_id: int, task_title: str, assignee: Member, deadline_str: str, creator_email: str = ""):
@@ -91,6 +91,11 @@ async def env_check(user: str = Depends(get_current_user)):
     """Debug: show which env vars are set (values hidden)."""
     keys = ["CLAUDE_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "BOT_TOKEN", "PORT"]
     return {k: "set" if os.getenv(k) else "MISSING" for k in keys}
+
+
+@app.get("/api/me")
+async def get_me(user: str = Depends(get_current_user)):
+    return {"email": user, "is_chairman": is_chairman_email(user)}
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -170,6 +175,7 @@ async def get_tasks(
     status: Optional[str] = None,
     priority: Optional[str] = None,
     assignee_id: Optional[int] = None,
+    source: Optional[str] = None,
     user: str = Depends(get_current_user),
 ):
     async with async_session() as session:
@@ -180,6 +186,8 @@ async def get_tasks(
             q = q.where(Task.priority == priority)
         if assignee_id:
             q = q.where(Task.assignee_id == assignee_id)
+        if source:
+            q = q.where(Task.source == source)
         q = q.order_by(Task.created_at.desc())
         result = await session.execute(q)
         tasks = [
@@ -253,6 +261,7 @@ class CreateTaskBody(BaseModel):
     assignee_id: Optional[int] = None
     priority: str = "medium"
     deadline: Optional[str] = None
+    source: Optional[str] = None  # "manual" | "voice"
 
 @app.post("/api/tasks")
 async def create_task_web(body: CreateTaskBody, user: str = Depends(get_current_user)):
@@ -265,7 +274,7 @@ async def create_task_web(body: CreateTaskBody, user: str = Depends(get_current_
             priority=body.priority,
             deadline=deadline_dt,
             status="new",
-            source="manual",
+            source=body.source if hasattr(body, 'source') and body.source else "manual",
             is_verified=True,
         )
         session.add(task)

@@ -21,6 +21,19 @@ ALLOWED_EMAILS: set[str] = set(
     e.strip().lower() for e in _raw.split(",") if e.strip()
 )
 
+# Chairman emails — can see stakeholder tasks tab
+_raw_ch = os.getenv("WEBAPP_CHAIRMAN_EMAILS", "")
+CHAIRMAN_EMAILS: set[str] = set(
+    e.strip().lower() for e in _raw_ch.split(",") if e.strip()
+)
+
+
+def is_chairman_email(email: str) -> bool:
+    """Return True if email belongs to a chairman (or no restriction configured)."""
+    if not CHAIRMAN_EMAILS:
+        return True  # No restriction configured — show to all
+    return email.strip().lower() in CHAIRMAN_EMAILS
+
 security = HTTPBearer()
 
 

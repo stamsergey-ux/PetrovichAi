@@ -458,18 +458,24 @@ function DashboardPage({ setPage, goTasks }) {
 }
 
 // ── Tasks list ────────────────────────────────────────────────────────────────
-function TasksPage({ initialFilter = 'all' }) {
+function TasksPage({ initialFilter = 'all', isChairman = false }) {
   const [tasks, setTasks] = useState([]); const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState(initialFilter); const [sort, setSort] = useState('created_desc');
+  const [filter, setFilter] = useState(initialFilter); const [sourceFilter, setSourceFilter] = useState('all');
+  const [sort, setSort] = useState('created_desc');
   const [sel, setSel] = useState(null); const [upd, setUpd] = useState(null); const [menu, setMenu] = useState(null);
 
   const tabs = [{id:'all',label:'Все'},{id:'new',label:'Новые'},{id:'in_progress',label:'В работе'},{id:'overdue',label:'Просрочено'},{id:'pending_done',label:'На проверке'},{id:'done',label:'Выполнено'}];
+  const sourceTabs = [{id:'all',label:'Все источники'},{id:'voice',label:'🎙 Голосовые'},{id:'stakeholder',label:'👔 Акционер'}];
   const sorts = [{id:'created_desc',label:'Новые'},{id:'deadline_asc',label:'По дедлайну'},{id:'assignee',label:'По исполнителю'},{id:'priority',label:'По приоритету'}];
 
   const load = useCallback(() => {
     setLoading(true);
-    api(`/api/tasks${filter!=='all'?`?status=${filter}`:''}`).then(d=>setTasks(d.tasks)).finally(()=>setLoading(false));
-  }, [filter]);
+    const params = [];
+    if (filter !== 'all') params.push(`status=${filter}`);
+    if (sourceFilter !== 'all') params.push(`source=${sourceFilter}`);
+    const qs = params.length ? `?${params.join('&')}` : '';
+    api(`/api/tasks${qs}`).then(d=>setTasks(d.tasks)).finally(()=>setLoading(false));
+  }, [filter, sourceFilter]);
   useEffect(()=>{load();},[load]);
 
   useEffect(() => {
@@ -503,14 +509,29 @@ function TasksPage({ initialFilter = 'all' }) {
 
   return (
     <div className="page fade-up">
-      <div style={{marginBottom:14}}><div className="page-title">Задачи</div><div className="page-sub">{tasks.length} задач</div></div>
+      <div style={{marginBottom:14}}>
+        <div className="page-title">
+          {sourceFilter==='voice'?'🎙 Голосовые задачи':sourceFilter==='stakeholder'?'👔 Задачи акционера':'Задачи'}
+        </div>
+        <div className="page-sub">{tasks.length} задач</div>
+      </div>
 
       {/* Status filter */}
-      <div style={{marginBottom:8,overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none'}}>
+      <div style={{marginBottom:6,overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none'}}>
         <div className="filter-bar">
           {tabs.map(t=><button key={t.id} className={`ftab${filter===t.id?' active':''}`} onClick={()=>setFilter(t.id)}>{t.label}</button>)}
         </div>
       </div>
+      {/* Source filter — chairman only */}
+      {isChairman&&(
+        <div style={{marginBottom:8,overflowX:'auto',WebkitOverflowScrolling:'touch',scrollbarWidth:'none'}}>
+          <div className="filter-bar" style={{background:'#ede9fe'}}>
+            {sourceTabs.map(t=><button key={t.id} className={`ftab${sourceFilter===t.id?' active':''}`}
+              style={sourceFilter===t.id?{background:'#fff',color:'#7c3aed'}:{color:'#7c3aed'}}
+              onClick={()=>setSourceFilter(t.id)}>{t.label}</button>)}
+          </div>
+        </div>
+      )}
 
       {/* Sort */}
       <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap',marginBottom:14}}>
@@ -1405,6 +1426,7 @@ function VoiceTab({ members }) {
         title:form.title, description:form.description||null,
         assignee_id:form.assignee_id?parseInt(form.assignee_id):null,
         priority:form.priority, deadline:form.deadline||null,
+        source:'voice',
       })});
       setCreated(true); setTranscript('');
       setForm({title:'',description:'',assignee_id:'',priority:'medium',deadline:''});
@@ -1492,11 +1514,17 @@ function App() {
   const [email, setEmail] = useState(localStorage.getItem('email'));
   const [page, setPage] = useState('dashboard');
   const [taskFilter, setTaskFilter] = useState('all');
-  if (!email || !localStorage.getItem('token')) return <LoginPage onLogin={e=>setEmail(e)}/>;
+  const [isChairman, setIsChairman] = useState(false);
+  useEffect(()=>{
+    if(localStorage.getItem('token')) {
+      api('/api/me').then(d=>setIsChairman(d.is_chairman)).catch(()=>{});
+    }
+  },[]);
+  if (!email || !localStorage.getItem('token')) return <LoginPage onLogin={e=>{ setEmail(e); api('/api/me').then(d=>setIsChairman(d.is_chairman)).catch(()=>{}); }}/>;
   function goTasks(filter) { setTaskFilter(filter); setPage('tasks'); }
   const pages = {
     dashboard: <DashboardPage setPage={setPage} goTasks={goTasks}/>,
-    tasks:     <TasksPage key={taskFilter} initialFilter={taskFilter}/>,
+    tasks:     <TasksPage key={taskFilter} initialFilter={taskFilter} isChairman={isChairman}/>,
     gantt:     <GanttPage/>,
     meetings:  <MeetingsPage/>,
     agenda:    <AgendaPage/>,
