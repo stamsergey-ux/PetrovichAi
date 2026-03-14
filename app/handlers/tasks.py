@@ -24,6 +24,10 @@ class BulkSelection(StatesGroup):
     selecting = State()
 
 
+class TaskEditDeadline(StatesGroup):
+    waiting_date = State()
+
+
 # Status icons including pending_done
 STATUS_ICON = {
     "new": "⬜",
@@ -50,6 +54,7 @@ def _task_keyboard(task_id: int, status: str, is_admin: bool = False) -> InlineK
     ])
     if is_admin:
         buttons.append([
+            InlineKeyboardButton(text="📅 Изменить срок", callback_data=f"task_edit_deadline:{task_id}"),
             InlineKeyboardButton(text="🗑 Удалить задачу", callback_data=f"task_delete:{task_id}"),
         ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -1055,3 +1060,71 @@ async def cb_last_protocol(callback: CallbackQuery):
     ])
     await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
+
+
+# ── Edit task deadline (chairman only) ────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("task_edit_deadline:"))
+async def cb_task_edit_deadline(callback: CallbackQuery, state: FSMContext):
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+    task_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if not task:
+            await callback.answer("Задача не найдена", show_alert=True)
+            return
+        current = task.deadline.strftime("%d.%m.%Y") if task.deadline else "без срока"
+
+    await state.set_state(TaskEditDeadline.waiting_date)
+    await state.update_data(task_id=task_id)
+    await callback.message.answer(
+        f"📅 Задача <b>#{task_id}</b>\n"
+        f"Текущий срок: <b>{current}</b>\n\n"
+        f"Введи новый срок в формате <b>ДД.ММ.ГГГГ</b>\n"
+        f"Например: <code>30.04.2026</code>\n\n"
+        f"Или отправь <code>-</code> чтобы убрать срок.",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(TaskEditDeadline.waiting_date, F.text)
+async def process_task_deadline(message: Message, state: FSMContext):
+    data = await state.get_data()
+    task_id = data["task_id"]
+    text = message.text.strip()
+
+    new_deadline = None
+    if text != "-":
+        for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d"):
+            try:
+                new_deadline = datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                continue
+        if not new_deadline:
+            await message.answer("⚠️ Не распознал дату. Введи ДД.ММ.ГГГГ, например: 30.04.2026\nИли «-» чтобы убрать срок.")
+            return
+
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if not task:
+            await message.answer("Задача не найдена.")
+            await state.clear()
+            return
+        old = task.deadline.strftime("%d.%m.%Y") if task.deadline else "без срока"
+        task.deadline = new_deadline
+        # Reset overdue status if new deadline is in the future
+        if new_deadline and new_deadline > datetime.utcnow() and task.status == "overdue":
+            task.status = "in_progress"
+        await session.commit()
+
+    await state.clear()
+    new_str = new_deadline.strftime("%d.%m.%Y") if new_deadline else "без срока"
+    await message.answer(
+        f"✅ Срок задачи <b>#{task_id}</b> обновлён\n"
+        f"Было: {old}\nСтало: {new_str}",
+        parse_mode="HTML",
+    )
