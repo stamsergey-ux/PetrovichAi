@@ -207,28 +207,17 @@ async def cb_my_tasks(callback: CallbackQuery):
     await callback.answer()
 
 
-PAGE_SIZE = 20
-
+# ── All tasks: grouped by meeting ────────────────────────────────────────────
 
 @router.callback_query(F.data == "all_tasks")
 async def cb_all_tasks(callback: CallbackQuery):
-    await _send_all_tasks(callback, page=0)
-
-
-@router.callback_query(F.data.startswith("all_tasks_page:"))
-async def cb_all_tasks_page(callback: CallbackQuery):
-    page = int(callback.data.split(":")[1])
-    await _send_all_tasks(callback, page=page)
-
-
-async def _send_all_tasks(callback: CallbackQuery, page: int):
+    """Show list of meetings with open task counts — newest first."""
     try:
         async with async_session() as session:
             result = await session.execute(
-                select(Task, Member)
-                .outerjoin(Member, Task.assignee_id == Member.id)
+                select(Task, Meeting)
+                .outerjoin(Meeting, Task.meeting_id == Meeting.id)
                 .where(Task.status.in_(["new", "in_progress", "overdue", "pending_done"]))
-                .order_by(Task.deadline.asc())
             )
             rows = result.all()
 
@@ -237,29 +226,112 @@ async def _send_all_tasks(callback: CallbackQuery, page: int):
             await callback.answer()
             return
 
+        # Group: meeting_id -> (meeting_obj, count, overdue_count)
+        groups: dict[int, list] = {}  # mid -> [meeting, total, overdue]
+        for row in rows:
+            task, meeting = row[0], row[1]
+            mid = task.meeting_id or 0
+            if mid not in groups:
+                groups[mid] = [meeting, 0, 0]
+            groups[mid][1] += 1
+            if task.status == "overdue":
+                groups[mid][2] += 1
+
+        # Sort: meetings by date desc, "no meeting" group last
+        def sort_key(item):
+            mid, (meeting, *_) = item
+            if mid == 0:
+                return (0,)  # last
+            return (1, -(meeting.date.timestamp() if meeting and meeting.date else 0))
+
+        sorted_groups = sorted(groups.items(), key=sort_key, reverse=False)
+
         total = len(rows)
         overdue_total = sum(1 for row in rows if row[0].status == "overdue")
-        total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
-        page = max(0, min(page, total_pages - 1))
 
-        page_rows = rows[page * PAGE_SIZE: (page + 1) * PAGE_SIZE]
-
-        text = f"👥 <b>Все открытые задачи</b> — {total}"
+        text = f"👥 <b>Все открытые задачи — {total}</b>"
         if overdue_total:
             text += f"\n🚨 {overdue_total} просрочено"
-        if total_pages > 1:
-            text += f"\n<i>Стр. {page + 1} из {total_pages}</i>"
+        text += "\n\nВыбери протокол:"
 
-        task_rows = _task_buttons(page_rows, show_assignee=True)
+        btn_rows = []
+        for mid, (meeting, cnt, ov) in sorted_groups:
+            if mid == 0:
+                label = "📌 Без протокола"
+            else:
+                date_str = meeting.date.strftime("%d.%m.%Y") if meeting and meeting.date else "—"
+                title = (meeting.title or "Совещание")[:30]
+                label = f"📋 {date_str} — {title}"
 
-        nav_row = []
-        if page > 0:
-            nav_row.append(InlineKeyboardButton(text="◀ Назад", callback_data=f"all_tasks_page:{page - 1}"))
-        if page < total_pages - 1:
-            nav_row.append(InlineKeyboardButton(text="Вперёд ▶", callback_data=f"all_tasks_page:{page + 1}"))
+            badge = f"  {cnt} зад."
+            if ov:
+                badge += f" 🚨{ov}"
+            btn_text = label + badge
+            if len(btn_text) > 60:
+                btn_text = btn_text[:59] + "…"
 
-        all_rows = task_rows + ([nav_row] if nav_row else [])
-        keyboard = InlineKeyboardMarkup(inline_keyboard=all_rows)
+            btn_rows.append([
+                InlineKeyboardButton(text=btn_text, callback_data=f"tasks_by_meeting:{mid}")
+            ])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=btn_rows)
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+        await callback.answer()
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+@router.callback_query(F.data.startswith("tasks_by_meeting:"))
+async def cb_tasks_by_meeting(callback: CallbackQuery):
+    """Show open tasks for a specific meeting (or tasks without meeting)."""
+    try:
+        mid = int(callback.data.split(":")[1])
+
+        async with async_session() as session:
+            if mid == 0:
+                result = await session.execute(
+                    select(Task, Member)
+                    .outerjoin(Member, Task.assignee_id == Member.id)
+                    .where(
+                        Task.status.in_(["new", "in_progress", "overdue", "pending_done"]),
+                        Task.meeting_id == None,
+                    )
+                    .order_by(Task.deadline.asc())
+                )
+                header = "📌 <b>Без протокола</b>"
+            else:
+                meeting = await session.get(Meeting, mid)
+                result = await session.execute(
+                    select(Task, Member)
+                    .outerjoin(Member, Task.assignee_id == Member.id)
+                    .where(
+                        Task.status.in_(["new", "in_progress", "overdue", "pending_done"]),
+                        Task.meeting_id == mid,
+                    )
+                    .order_by(Task.deadline.asc())
+                )
+                if meeting:
+                    date_str = meeting.date.strftime("%d.%m.%Y")
+                    header = f"📋 <b>{escape(meeting.title or 'Совещание')}</b>\n📅 {date_str}"
+                else:
+                    header = "📋 <b>Протокол</b>"
+            rows = result.all()
+
+        if not rows:
+            await callback.message.answer(
+                f"{header}\n\n🎉 Нет открытых задач", parse_mode="HTML"
+            )
+            await callback.answer()
+            return
+
+        overdue = sum(1 for row in rows if row[0].status == "overdue")
+        text = f"{header}\n\n{len(rows)} открытых задач"
+        if overdue:
+            text += f"  🚨 {overdue} просрочено"
+
+        task_rows = _task_buttons(rows, show_assignee=True)
+        back_row = [InlineKeyboardButton(text="← Все протоколы", callback_data="all_tasks")]
+        keyboard = InlineKeyboardMarkup(inline_keyboard=task_rows + [back_row])
 
         await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
         await callback.answer()
