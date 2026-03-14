@@ -115,43 +115,36 @@ def _format_task_card(
     status_icon = STATUS_ICON.get(task.status, "⬜")
     priority_badge = {"high": "🔥 ", "medium": "", "low": "💤 "}.get(task.priority, "")
 
-    deadline_str = ""
     if task.deadline:
         deadline_str = task.deadline.strftime("%d.%m.%Y")
         days_left = (task.deadline - datetime.utcnow()).days
         if task.status not in ("done", "pending_done"):
             if days_left < 0:
-                deadline_str += f" (⚠️ просрочено на {abs(days_left)} дн.)"
+                deadline_str += f" ⚠️{abs(days_left)}дн."
             elif days_left == 0:
-                deadline_str += " (⚡ сегодня!)"
+                deadline_str += " ⚡сегодня"
             elif days_left <= 2:
-                deadline_str += f" (⏳ {days_left} дн.)"
+                deadline_str += f" ⏳{days_left}дн."
     else:
         deadline_str = "без срока"
 
-    title = escape(task.title)
-    lines = [f"{status_icon} {priority_badge}<b>#{task.id}</b> {title}"]
+    # Line 1: status + priority + id + title
+    lines = [f"{status_icon} {priority_badge}<b>#{task.id}</b>  {escape(task.title)}"]
+
+    # Line 2: assignee · deadline in one line
+    meta = []
     if show_assignee:
-        lines.append(f"👤 Исполнитель: {escape(assignee_name)}")
-    lines.append(f"📅 Срок: {escape(deadline_str)}")
+        meta.append(f"👤 {escape(assignee_name)}")
+    meta.append(f"📅 {escape(deadline_str)}")
+    lines.append("  ".join(meta))
 
     if full:
-        if creator_name:
-            lines.append(f"📌 Поставил: {escape(creator_name)}")
         if meeting_title:
-            lines.append(f"📋 Протокол: {escape(meeting_title)}")
-        if task.description:
-            lines.append(f"\n📝 <b>Описание:</b>\n{escape(task.description)}")
+            lines.append(f"📋 {escape(meeting_title)}")
         if task.context_quote:
-            lines.append(f'\n💭 <b>Контекст из протокола:</b>\n<i>{escape(task.context_quote)}</i>')
+            lines.append(f'\n💭 <i>{escape(task.context_quote)}</i>')
         if task.completion_comment:
-            lines.append(f"\n✅ <b>Как выполнено:</b>\n{escape(task.completion_comment)}")
-    else:
-        if task.context_quote:
-            quote = task.context_quote[:120]
-            if len(task.context_quote) > 120:
-                quote += "..."
-            lines.append(f'💭 <i>{escape(quote)}</i>')
+            lines.append(f"\n✅ <b>Как выполнено:</b> {escape(task.completion_comment)}")
 
     return "\n".join(lines)
 
@@ -607,13 +600,11 @@ async def cb_task_detail(callback: CallbackQuery):
     creator_name = creator.name if creator else None
     meeting_title = (meeting.title or f"Совещание {meeting.date.strftime('%d.%m.%Y')}") if meeting else None
 
-    text = f"📋 <b>Задача #{task_id}</b>\n\n"
-    text += _format_task_card(
+    text = _format_task_card(
         task,
         assignee_name=assignee_name,
         show_assignee=True,
         full=True,
-        creator_name=creator_name,
         meeting_title=meeting_title,
     )
 
