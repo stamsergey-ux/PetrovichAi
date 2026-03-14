@@ -139,15 +139,17 @@ def _main_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
 
 def _persistent_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
     """Persistent reply keyboard — always visible at the bottom of the chat."""
-    buttons = [
-        [KeyboardButton(text="📋 Мои задачи"), KeyboardButton(text="📝 Протокол")],
-    ]
     if is_admin:
-        buttons.append([KeyboardButton(text="📝 Поставить задачу")])
-        buttons.append([KeyboardButton(text="⚙️ Расширенные функции")])
-    buttons.append(
-        [KeyboardButton(text="🔄 Перезапустить бот"), KeyboardButton(text="❓ Помощь")]
-    )
+        buttons = [
+            [KeyboardButton(text="📋 Мои задачи"), KeyboardButton(text="📝 Поставить задачу")],
+            [KeyboardButton(text="👥 Все задачи"), KeyboardButton(text="📊 Дашборд")],
+            [KeyboardButton(text="⚙️ Управление")],
+        ]
+    else:
+        buttons = [
+            [KeyboardButton(text="📋 Мои задачи"), KeyboardButton(text="📝 Протокол")],
+            [KeyboardButton(text="❓ Помощь")],
+        ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 
@@ -158,8 +160,7 @@ def _stakeholder_keyboard() -> ReplyKeyboardMarkup:
     buttons = [
         [KeyboardButton(text="💎 Поставить задачу"), KeyboardButton(text="💎 Мои поручения")],
         [KeyboardButton(text="📋 Мои задачи"), KeyboardButton(text="📝 Протокол")],
-        [KeyboardButton(text="⚙️ Расширенные функции")],
-        [KeyboardButton(text="🔄 Перезапустить бот"), KeyboardButton(text="❓ Помощь")],
+        [KeyboardButton(text="❓ Помощь")],
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 @router.message(CommandStart())

@@ -335,7 +335,7 @@ async def _dispatch_text(message: Message, raw_text: str):
     if text in ("помощь", "❓ помощь", "help"):
         return await _show_help(message)
 
-    if text in ("⚙️ расширенные функции", "расширенные функции"):
+    if text in ("⚙️ расширенные функции", "расширенные функции", "⚙️ управление", "управление"):
         return await _show_advanced_menu(message)
 
     if text in ("🔄 перезапустить бот", "перезапустить бот", "старт", "/start"):
@@ -604,7 +604,7 @@ async def _show_analytics(message: Message):
 
 
 async def _show_advanced_menu(message: Message):
-    """Show advanced admin menu with inline buttons."""
+    """Show advanced admin menu with inline buttons grouped by section."""
     from app.utils import is_stakeholder
     if is_stakeholder(message.from_user.username):
         from app.handlers.onboarding import MEMBER_INTRO
@@ -612,39 +612,42 @@ async def _show_advanced_menu(message: Message):
         await message.answer(MEMBER_INTRO.format(name=name), parse_mode="HTML")
         return
     if not is_chairman(message.from_user.username):
-        await message.answer("⛔ Расширенные функции доступны администраторам.")
+        await message.answer("⛔ Управление доступно администраторам.")
         return
 
-    text = "⚙️ <b>РАСШИРЕННЫЕ ФУНКЦИИ</b>\n\n"
-    text += "Выбери действие:"
+    text = "⚙️ <b>УПРАВЛЕНИЕ</b>"
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        # Section: Tasks
+        [InlineKeyboardButton(text="── ЗАДАЧИ ──", callback_data="noop")],
         [
-            InlineKeyboardButton(text="✅ Верифицировать задачи", callback_data="adv_verify"),
+            InlineKeyboardButton(text="✅ Верифицировать", callback_data="adv_verify"),
+            InlineKeyboardButton(text="💎 Задачи акционера", callback_data="stk_all_tasks"),
         ],
+        # Section: Meetings
+        [InlineKeyboardButton(text="── СОВЕЩАНИЯ ──", callback_data="noop")],
         [
             InlineKeyboardButton(text="📌 Адженда", callback_data="adv_agenda"),
-            InlineKeyboardButton(text="📊 Аналитика", callback_data="adv_analytics"),
-        ],
-        [
-            InlineKeyboardButton(text="📈 Гант (PDF)", callback_data="adv_gantt"),
             InlineKeyboardButton(text="📅 Назначить совещание", callback_data="adv_schedule"),
         ],
         [
-            InlineKeyboardButton(text="👥 Все задачи", callback_data="all_tasks"),
-            InlineKeyboardButton(text="📊 Дашборд", callback_data="dashboard_cb"),
+            InlineKeyboardButton(text="🗑 Протоколы", callback_data="manage_protocols"),
+            InlineKeyboardButton(text="📎 Материалы", callback_data="adv_materials"),
         ],
+        # Section: Analytics
+        [InlineKeyboardButton(text="── АНАЛИТИКА ──", callback_data="noop")],
         [
-            InlineKeyboardButton(text="📎 Материалы совещаний", callback_data="adv_materials"),
-        ],
-        [
-            InlineKeyboardButton(text="💎 Задачи акционера", callback_data="stk_all_tasks"),
-        ],
-        [
-            InlineKeyboardButton(text="🗑 Управление протоколами", callback_data="manage_protocols"),
+            InlineKeyboardButton(text="📊 Аналитика", callback_data="adv_analytics"),
+            InlineKeyboardButton(text="📈 Гант (PDF)", callback_data="adv_gantt"),
         ],
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+@router.callback_query(F.data == "noop")
+async def cb_noop(callback: CallbackQuery):
+    """No-op handler for section header buttons."""
+    await callback.answer()
 
 
 @router.callback_query(F.data == "adv_materials")
