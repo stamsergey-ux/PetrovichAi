@@ -61,7 +61,9 @@ def _task_keyboard(task_id: int, status: str, is_admin: bool = False) -> InlineK
 
 
 def _task_list_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup | None:
-    buttons = []
+    buttons = [
+        [InlineKeyboardButton(text="✅ Закрытые задачи", callback_data="my_closed_tasks")],
+    ]
     if is_admin:
         buttons.append([
             InlineKeyboardButton(text="📋 Мои поручения", callback_data="my_assigned"),
@@ -70,7 +72,7 @@ def _task_list_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup | None:
         buttons.append([
             InlineKeyboardButton(text="📊 Дашборд", callback_data="dashboard_cb"),
         ])
-    return InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def _task_buttons(
@@ -1128,3 +1130,193 @@ async def process_task_deadline(message: Message, state: FSMContext):
         f"Было: {old}\nСтало: {new_str}",
         parse_mode="HTML",
     )
+
+
+# ── Closed tasks (done status) ─────────────────────────────────────────────────
+
+def _closed_groups(rows) -> list[tuple[int, object, int]]:
+    """Group (Task, Meeting) rows by meeting_id, sorted newest-first."""
+    groups: dict[int, list] = {}
+    for task, meeting in rows:
+        mid = task.meeting_id or 0
+        if mid not in groups:
+            groups[mid] = [meeting, 0]
+        groups[mid][1] += 1
+
+    def sort_key(item):
+        mid, (meeting, _) = item
+        if mid == 0:
+            return (0,)
+        return (1, -(meeting.date.timestamp() if meeting and meeting.date else 0))
+
+    return [(mid, meeting, cnt) for mid, (meeting, cnt) in sorted(groups.items(), key=sort_key)]
+
+
+@router.callback_query(F.data == "my_closed_tasks")
+async def cb_my_closed_tasks(callback: CallbackQuery):
+    """Show current user's done tasks grouped by meeting."""
+    user_id = callback.from_user.id
+    async with async_session() as session:
+        member = (await session.execute(
+            select(Member).where(Member.telegram_id == user_id)
+        )).scalar_one_or_none()
+        if not member:
+            await callback.answer("Ты не зарегистрирован. Нажми /start", show_alert=True)
+            return
+        result = await session.execute(
+            select(Task, Meeting)
+            .outerjoin(Meeting, Task.meeting_id == Meeting.id)
+            .where(Task.assignee_id == member.id, Task.status == "done")
+        )
+        rows = result.all()
+
+    if not rows:
+        await callback.message.answer("📭 <b>Нет закрытых задач.</b>", parse_mode="HTML")
+        await callback.answer()
+        return
+
+    sorted_groups = _closed_groups(rows)
+    text = f"✅ <b>Мои закрытые задачи — {len(rows)}</b>\n\nВыбери протокол:"
+    btn_rows = []
+    for mid, meeting, cnt in sorted_groups:
+        if mid == 0:
+            label = "📌 Поручения председателя"
+        else:
+            date_str = meeting.date.strftime("%d.%m.%Y") if meeting and meeting.date else "—"
+            label = f"📋 {date_str} — {(meeting.title or 'Совещание')[:30]}"
+        btn_text = f"{label}  {cnt} зад."
+        if len(btn_text) > 60:
+            btn_text = btn_text[:59] + "…"
+        btn_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"my_closed_meeting:{mid}")])
+
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=btn_rows))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("my_closed_meeting:"))
+async def cb_my_closed_meeting(callback: CallbackQuery):
+    """Show user's done tasks within a specific meeting."""
+    mid = int(callback.data.split(":")[1])
+    user_id = callback.from_user.id
+    async with async_session() as session:
+        member = (await session.execute(
+            select(Member).where(Member.telegram_id == user_id)
+        )).scalar_one_or_none()
+        if not member:
+            await callback.answer("Не зарегистрирован", show_alert=True)
+            return
+        if mid == 0:
+            result = await session.execute(
+                select(Task).where(
+                    Task.assignee_id == member.id, Task.status == "done", Task.meeting_id == None
+                ).order_by(Task.completed_at.desc().nulls_last())
+            )
+            header = "📌 <b>Поручения председателя</b>"
+        else:
+            meeting = await session.get(Meeting, mid)
+            result = await session.execute(
+                select(Task).where(
+                    Task.assignee_id == member.id, Task.status == "done", Task.meeting_id == mid
+                ).order_by(Task.completed_at.desc().nulls_last())
+            )
+            if meeting:
+                header = f"📋 <b>{escape(meeting.title or 'Совещание')}</b>\n📅 {meeting.date.strftime('%d.%m.%Y')}"
+            else:
+                header = "📋 <b>Протокол</b>"
+        tasks = result.scalars().all()
+
+    if not tasks:
+        await callback.message.answer(f"{header}\n\n📭 Нет закрытых задач", parse_mode="HTML")
+        await callback.answer()
+        return
+
+    task_rows = _task_buttons(tasks)
+    back_row = [InlineKeyboardButton(text="← Назад", callback_data="my_closed_tasks")]
+    await callback.message.answer(
+        f"{header}\n\n✅ {len(tasks)} закрытых задач",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=task_rows + [back_row]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "all_closed_tasks")
+async def cb_all_closed_tasks(callback: CallbackQuery):
+    """Show all done tasks grouped by meeting (chairman only)."""
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+    async with async_session() as session:
+        result = await session.execute(
+            select(Task, Meeting)
+            .outerjoin(Meeting, Task.meeting_id == Meeting.id)
+            .where(Task.status == "done")
+        )
+        rows = result.all()
+
+    if not rows:
+        await callback.message.answer("📭 <b>Нет закрытых задач.</b>", parse_mode="HTML")
+        await callback.answer()
+        return
+
+    sorted_groups = _closed_groups(rows)
+    text = f"✅ <b>Все закрытые задачи — {len(rows)}</b>\n\nВыбери протокол:"
+    btn_rows = []
+    for mid, meeting, cnt in sorted_groups:
+        if mid == 0:
+            label = "📌 Поручения председателя"
+        else:
+            date_str = meeting.date.strftime("%d.%m.%Y") if meeting and meeting.date else "—"
+            label = f"📋 {date_str} — {(meeting.title or 'Совещание')[:30]}"
+        btn_text = f"{label}  {cnt} зад."
+        if len(btn_text) > 60:
+            btn_text = btn_text[:59] + "…"
+        btn_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"all_closed_meeting:{mid}")])
+
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=btn_rows))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("all_closed_meeting:"))
+async def cb_all_closed_meeting(callback: CallbackQuery):
+    """Show all done tasks within a specific meeting (chairman only)."""
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+    mid = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        if mid == 0:
+            result = await session.execute(
+                select(Task, Member)
+                .outerjoin(Member, Task.assignee_id == Member.id)
+                .where(Task.status == "done", Task.meeting_id == None)
+                .order_by(Task.completed_at.desc().nulls_last())
+            )
+            header = "📌 <b>Поручения председателя</b>"
+        else:
+            meeting = await session.get(Meeting, mid)
+            result = await session.execute(
+                select(Task, Member)
+                .outerjoin(Member, Task.assignee_id == Member.id)
+                .where(Task.status == "done", Task.meeting_id == mid)
+                .order_by(Task.completed_at.desc().nulls_last())
+            )
+            if meeting:
+                header = f"📋 <b>{escape(meeting.title or 'Совещание')}</b>\n📅 {meeting.date.strftime('%d.%m.%Y')}"
+            else:
+                header = "📋 <b>Протокол</b>"
+        rows = result.all()
+
+    if not rows:
+        await callback.message.answer(f"{header}\n\n📭 Нет закрытых задач", parse_mode="HTML")
+        await callback.answer()
+        return
+
+    task_rows = _task_buttons(rows, show_assignee=True)
+    back_row = [InlineKeyboardButton(text="← Назад", callback_data="all_closed_tasks")]
+    await callback.message.answer(
+        f"{header}\n\n✅ {len(rows)} закрытых задач",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=task_rows + [back_row]),
+    )
+    await callback.answer()

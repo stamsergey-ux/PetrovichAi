@@ -624,6 +624,9 @@ async def _show_advanced_menu(message: Message):
             InlineKeyboardButton(text="✅ Верифицировать", callback_data="adv_verify"),
             InlineKeyboardButton(text="💎 Задачи акционера", callback_data="stk_all_tasks"),
         ],
+        [
+            InlineKeyboardButton(text="✅ Закрытые задачи всех", callback_data="all_closed_tasks"),
+        ],
         # Section: Meetings
         [InlineKeyboardButton(text="── СОВЕЩАНИЯ ──", callback_data="noop")],
         [
