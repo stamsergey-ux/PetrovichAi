@@ -640,6 +640,9 @@ async def _show_advanced_menu(message: Message):
         [
             InlineKeyboardButton(text="💎 Задачи акционера", callback_data="stk_all_tasks"),
         ],
+        [
+            InlineKeyboardButton(text="🗑 Управление протоколами", callback_data="manage_protocols"),
+        ],
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 

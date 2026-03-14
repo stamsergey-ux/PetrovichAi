@@ -8,14 +8,23 @@ import traceback
 from datetime import datetime
 
 from aiogram import Router, F, Bot
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from sqlalchemy import select
+from sqlalchemy import select, delete as sa_delete
 
-from app.database import async_session, Meeting, Task, Member, compute_transcript_hash
+from app.database import (
+    async_session, Meeting, Task, Member, TaskComment,
+    MeetingEmbedding, MeetingMaterial, compute_transcript_hash,
+)
 from app.ai_service import analyze_transcript
 from app.rag import store_meeting_chunks
 from app.utils import is_chairman
 from app.handlers.task_verify import start_verification
+
+
+class ProtocolBulkSelection(StatesGroup):
+    selecting = State()
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -504,3 +513,308 @@ async def _notify_assignees(bot: Bot, meeting_id: int):
             await bot.send_message(tg_id, text, reply_markup=keyboard)
         except Exception as e:
             logger.warning(f"Failed to notify {tg_id}: {e}")
+
+
+# ── Protocol management (delete single / bulk) ────────────────────────────────
+
+async def _delete_meeting_cascade(session, meeting_id: int):
+    """Delete a meeting and all linked data (tasks, comments, embeddings, materials)."""
+    # Get task IDs for this meeting
+    task_ids_result = await session.execute(
+        select(Task.id).where(Task.meeting_id == meeting_id)
+    )
+    task_ids = [row[0] for row in task_ids_result.all()]
+
+    if task_ids:
+        await session.execute(sa_delete(TaskComment).where(TaskComment.task_id.in_(task_ids)))
+        await session.execute(sa_delete(Task).where(Task.meeting_id == meeting_id))
+
+    await session.execute(sa_delete(MeetingEmbedding).where(MeetingEmbedding.meeting_id == meeting_id))
+    await session.execute(sa_delete(MeetingMaterial).where(MeetingMaterial.meeting_id == meeting_id))
+    await session.execute(sa_delete(Meeting).where(Meeting.id == meeting_id))
+
+
+@router.callback_query(F.data == "manage_protocols")
+async def cb_manage_protocols(callback: CallbackQuery):
+    """Show list of all protocols with delete options — chairman only."""
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(Meeting).order_by(Meeting.date.desc())
+            )
+            meetings = result.scalars().all()
+
+            # Count tasks per meeting
+            task_counts = {}
+            for m in meetings:
+                cnt = (await session.execute(
+                    select(Task).where(Task.meeting_id == m.id)
+                )).scalars().all()
+                task_counts[m.id] = len(cnt)
+
+        if not meetings:
+            await callback.message.answer("📭 Протоколов пока нет.", parse_mode="HTML")
+            await callback.answer()
+            return
+
+        text = f"📋 <b>Все протоколы</b> — {len(meetings)} шт.\n\nВыбери для удаления:"
+        btn_rows = []
+        for m in meetings:
+            date_str = m.date.strftime("%d.%m.%Y") if m.date else "—"
+            title = (m.title or "Совещание")[:35]
+            status = "✅" if m.is_confirmed else "⏳"
+            tasks_cnt = task_counts.get(m.id, 0)
+            label = f"{status} {date_str} — {title}  ({tasks_cnt} зад.)"
+            if len(label) > 60:
+                label = label[:59] + "…"
+            btn_rows.append([
+                InlineKeyboardButton(text=label, callback_data=f"proto_detail:{m.id}"),
+                InlineKeyboardButton(text="🗑", callback_data=f"proto_delete:{m.id}"),
+            ])
+
+        btn_rows.append([
+            InlineKeyboardButton(text="☑ Выбрать несколько", callback_data="proto_bulk_mode"),
+        ])
+        await callback.message.answer(text, parse_mode="HTML",
+                                       reply_markup=InlineKeyboardMarkup(inline_keyboard=btn_rows))
+        await callback.answer()
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+@router.callback_query(F.data.startswith("proto_detail:"))
+async def cb_proto_detail(callback: CallbackQuery):
+    """Show brief info about a protocol."""
+    try:
+        mid = int(callback.data.split(":")[1])
+        async with async_session() as session:
+            meeting = await session.get(Meeting, mid)
+            if not meeting:
+                await callback.answer("Протокол не найден", show_alert=True)
+                return
+            task_cnt = len((await session.execute(
+                select(Task).where(Task.meeting_id == mid)
+            )).scalars().all())
+
+        from html import escape as _escape
+        date_str = meeting.date.strftime("%d.%m.%Y") if meeting.date else "—"
+        status = "✅ Подтверждён" if meeting.is_confirmed else "⏳ Не подтверждён"
+        text = (
+            f"📋 <b>{_escape(meeting.title or 'Совещание')}</b>\n"
+            f"📅 {date_str}\n"
+            f"Статус: {status}\n"
+            f"Задач: {task_cnt}\n\n"
+            f"<i>При удалении протокола все связанные задачи тоже будут удалены.</i>"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🗑 Удалить этот протокол", callback_data=f"proto_delete:{mid}"),
+                InlineKeyboardButton(text="✖ Закрыть", callback_data="noop"),
+            ]
+        ])
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+        await callback.answer()
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+@router.callback_query(F.data.startswith("proto_delete:"))
+async def cb_proto_delete(callback: CallbackQuery):
+    """Ask confirmation before deleting a single protocol."""
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+    try:
+        mid = int(callback.data.split(":")[1])
+        async with async_session() as session:
+            meeting = await session.get(Meeting, mid)
+            if not meeting:
+                await callback.answer("Протокол не найден", show_alert=True)
+                return
+            task_cnt = len((await session.execute(
+                select(Task).where(Task.meeting_id == mid)
+            )).scalars().all())
+
+        from html import escape as _escape
+        date_str = meeting.date.strftime("%d.%m.%Y") if meeting.date else "—"
+        title = _escape(meeting.title or "Совещание")
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"proto_delete_ok:{mid}"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="noop"),
+            ]
+        ])
+        await callback.message.answer(
+            f"🗑 <b>Удалить протокол?</b>\n\n"
+            f"📋 {title}\n📅 {date_str}\n"
+            f"⚠️ Вместе с протоколом будут удалены <b>{task_cnt} задач</b>.\n\n"
+            f"Это действие нельзя отменить.",
+            parse_mode="HTML", reply_markup=kb,
+        )
+        await callback.answer()
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+@router.callback_query(F.data.startswith("proto_delete_ok:"))
+async def cb_proto_delete_ok(callback: CallbackQuery):
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+    try:
+        mid = int(callback.data.split(":")[1])
+        async with async_session() as session:
+            meeting = await session.get(Meeting, mid)
+            if not meeting:
+                await callback.answer("Протокол уже удалён", show_alert=True)
+                return
+            title = meeting.title or "Совещание"
+            await _delete_meeting_cascade(session, mid)
+            await session.commit()
+
+        from html import escape as _escape
+        await callback.message.answer(
+            f"🗑 <b>Протокол удалён</b>\n<i>{_escape(title)}</i>",
+            parse_mode="HTML",
+        )
+        await callback.answer("Удалено")
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+# ── Bulk protocol selection ───────────────────────────────────────────────────
+
+async def _fetch_all_meetings():
+    async with async_session() as session:
+        result = await session.execute(select(Meeting).order_by(Meeting.date.desc()))
+        return result.scalars().all()
+
+
+def _proto_bulk_keyboard(meetings, selected_ids: set) -> InlineKeyboardMarkup:
+    btn_rows = []
+    for m in meetings:
+        icon = "☑" if m.id in selected_ids else "☐"
+        date_str = m.date.strftime("%d.%m.%Y") if m.date else "—"
+        title = (m.title or "Совещание")[:35]
+        status = "✅" if m.is_confirmed else "⏳"
+        btn_text = f"{icon} {status} {date_str} — {title}"
+        if len(btn_text) > 60:
+            btn_text = btn_text[:59] + "…"
+        btn_rows.append([InlineKeyboardButton(
+            text=btn_text, callback_data=f"proto_bulk_toggle:{m.id}"
+        )])
+
+    n = len(selected_ids)
+    btn_rows.append([
+        InlineKeyboardButton(text=f"🗑 Удалить ({n})", callback_data="proto_bulk_delete"),
+    ])
+    btn_rows.append([
+        InlineKeyboardButton(text="☑ Все", callback_data="proto_bulk_all"),
+        InlineKeyboardButton(text="☐ Снять", callback_data="proto_bulk_none"),
+        InlineKeyboardButton(text="✖ Отмена", callback_data="proto_bulk_cancel"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=btn_rows)
+
+
+@router.callback_query(F.data == "proto_bulk_mode")
+async def cb_proto_bulk_mode(callback: CallbackQuery, state: FSMContext):
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+    try:
+        meetings = await _fetch_all_meetings()
+        if not meetings:
+            await callback.answer("Нет протоколов", show_alert=True)
+            return
+
+        await state.set_state(ProtocolBulkSelection.selecting)
+        await state.update_data(selected=[])
+
+        keyboard = _proto_bulk_keyboard(meetings, set())
+        await callback.message.answer(
+            "☑ <b>Выбери протоколы для удаления:</b>",
+            parse_mode="HTML", reply_markup=keyboard,
+        )
+        await callback.answer()
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+@router.callback_query(ProtocolBulkSelection.selecting, F.data.startswith("proto_bulk_toggle:"))
+async def cb_proto_bulk_toggle(callback: CallbackQuery, state: FSMContext):
+    try:
+        mid = int(callback.data.split(":")[1])
+        data = await state.get_data()
+        selected = set(data.get("selected", []))
+        if mid in selected:
+            selected.discard(mid)
+        else:
+            selected.add(mid)
+        await state.update_data(selected=list(selected))
+
+        meetings = await _fetch_all_meetings()
+        await callback.message.edit_reply_markup(reply_markup=_proto_bulk_keyboard(meetings, selected))
+        await callback.answer()
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+@router.callback_query(ProtocolBulkSelection.selecting, F.data == "proto_bulk_all")
+async def cb_proto_bulk_all(callback: CallbackQuery, state: FSMContext):
+    try:
+        meetings = await _fetch_all_meetings()
+        selected = {m.id for m in meetings}
+        await state.update_data(selected=list(selected))
+        await callback.message.edit_reply_markup(reply_markup=_proto_bulk_keyboard(meetings, selected))
+        await callback.answer(f"Выбрано {len(selected)}")
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+@router.callback_query(ProtocolBulkSelection.selecting, F.data == "proto_bulk_none")
+async def cb_proto_bulk_none(callback: CallbackQuery, state: FSMContext):
+    try:
+        meetings = await _fetch_all_meetings()
+        await state.update_data(selected=[])
+        await callback.message.edit_reply_markup(reply_markup=_proto_bulk_keyboard(meetings, set()))
+        await callback.answer("Выделение снято")
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+@router.callback_query(ProtocolBulkSelection.selecting, F.data == "proto_bulk_cancel")
+async def cb_proto_bulk_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.delete()
+    await callback.answer("Отменено")
+
+
+@router.callback_query(ProtocolBulkSelection.selecting, F.data == "proto_bulk_delete")
+async def cb_proto_bulk_delete(callback: CallbackQuery, state: FSMContext):
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+    try:
+        data = await state.get_data()
+        selected = list(data.get("selected", []))
+        if not selected:
+            await callback.answer("Не выбрано ни одного протокола", show_alert=True)
+            return
+
+        async with async_session() as session:
+            for mid in selected:
+                await _delete_meeting_cascade(session, mid)
+            await session.commit()
+
+        await state.clear()
+        await callback.message.delete()
+        await callback.message.answer(
+            f"🗑 <b>Удалено протоколов: {len(selected)}</b>",
+            parse_mode="HTML",
+        )
+        await callback.answer(f"Удалено {len(selected)}")
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
