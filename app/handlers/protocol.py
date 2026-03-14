@@ -26,6 +26,10 @@ from app.handlers.task_verify import start_verification
 class ProtocolBulkSelection(StatesGroup):
     selecting = State()
 
+
+class ProtocolEditDate(StatesGroup):
+    waiting_date = State()
+
 logger = logging.getLogger(__name__)
 router = Router()
 
@@ -611,14 +615,68 @@ async def cb_proto_detail(callback: CallbackQuery):
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
-                InlineKeyboardButton(text="🗑 Удалить этот протокол", callback_data=f"proto_delete:{mid}"),
-                InlineKeyboardButton(text="✖ Закрыть", callback_data="noop"),
-            ]
+                InlineKeyboardButton(text="📅 Изменить дату", callback_data=f"proto_edit_date:{mid}"),
+                InlineKeyboardButton(text="🗑 Удалить", callback_data=f"proto_delete:{mid}"),
+            ],
+            [InlineKeyboardButton(text="✖ Закрыть", callback_data="noop")],
         ])
         await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
         await callback.answer()
     except Exception as e:
         await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+@router.callback_query(F.data.startswith("proto_edit_date:"))
+async def cb_proto_edit_date(callback: CallbackQuery, state: FSMContext):
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+    mid = int(callback.data.split(":")[1])
+    await state.set_state(ProtocolEditDate.waiting_date)
+    await state.update_data(meeting_id=mid)
+    await callback.message.answer(
+        "📅 Введи новую дату протокола в формате <b>ДД.ММ.ГГГГ</b>\n"
+        "Например: <code>13.03.2026</code>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(ProtocolEditDate.waiting_date, F.text)
+async def process_proto_date(message: Message, state: FSMContext):
+    from html import escape as _escape
+    data = await state.get_data()
+    mid = data["meeting_id"]
+    text = message.text.strip()
+    new_date = None
+    for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            new_date = datetime.strptime(text, fmt)
+            break
+        except ValueError:
+            continue
+    if not new_date:
+        await message.answer("⚠️ Не распознал дату. Введи в формате ДД.ММ.ГГГГ, например: 13.03.2026")
+        return
+
+    async with async_session() as session:
+        meeting = await session.get(Meeting, mid)
+        if not meeting:
+            await message.answer("Протокол не найден.")
+            await state.clear()
+            return
+        old_date = meeting.date.strftime("%d.%m.%Y") if meeting.date else "—"
+        meeting.date = new_date
+        await session.commit()
+
+    await state.clear()
+    await message.answer(
+        f"✅ Дата протокола обновлена\n\n"
+        f"📋 {_escape(meeting.title or 'Совещание')}\n"
+        f"Было: {old_date}\n"
+        f"Стало: {new_date.strftime('%d.%m.%Y')}",
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(F.data.startswith("proto_delete:"))
