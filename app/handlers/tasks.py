@@ -8,7 +8,7 @@ from aiogram import Router, F, Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from sqlalchemy import select
+from sqlalchemy import select, delete as sa_delete
 
 from app.database import async_session, Task, Member, Meeting, TaskComment
 from app.utils import is_chairman
@@ -18,6 +18,10 @@ router = Router()
 
 class TaskCompletion(StatesGroup):
     waiting_comment = State()
+
+
+class BulkSelection(StatesGroup):
+    selecting = State()
 
 
 # Status icons including pending_done
@@ -329,10 +333,259 @@ async def cb_tasks_by_meeting(callback: CallbackQuery):
 
         task_rows = _task_buttons(rows, show_assignee=True)
         back_row = [InlineKeyboardButton(text="← Все протоколы", callback_data="all_tasks")]
-        keyboard = InlineKeyboardMarkup(inline_keyboard=task_rows + [back_row])
+        extra_rows = []
+        if is_chairman(callback.from_user.username):
+            extra_rows = [[InlineKeyboardButton(text="☑ Выбрать несколько", callback_data=f"bulk_mode:{mid}")]]
+        keyboard = InlineKeyboardMarkup(inline_keyboard=task_rows + extra_rows + [back_row])
 
         await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
         await callback.answer()
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+# ── Bulk selection helpers ────────────────────────────────────────────────────
+
+async def _fetch_open_tasks_for_meeting(mid: int):
+    """Return list of (Task, Member|None) rows for open tasks in a meeting."""
+    async with async_session() as session:
+        if mid == 0:
+            result = await session.execute(
+                select(Task, Member)
+                .outerjoin(Member, Task.assignee_id == Member.id)
+                .where(
+                    Task.status.in_(["new", "in_progress", "overdue", "pending_done"]),
+                    Task.meeting_id == None,
+                )
+                .order_by(Member.display_name.asc().nulls_last(), Task.deadline.asc().nulls_last())
+            )
+        else:
+            result = await session.execute(
+                select(Task, Member)
+                .outerjoin(Member, Task.assignee_id == Member.id)
+                .where(
+                    Task.status.in_(["new", "in_progress", "overdue", "pending_done"]),
+                    Task.meeting_id == mid,
+                )
+                .order_by(Member.display_name.asc().nulls_last(), Task.deadline.asc().nulls_last())
+            )
+        return result.all()
+
+
+def _bulk_keyboard(rows, selected_ids: set, mid: int) -> InlineKeyboardMarkup:
+    """Keyboard with per-task checkboxes and action buttons."""
+    btn_rows = []
+    for row in rows:
+        task, member = row[0], row[1]
+        icon = "☑" if task.id in selected_ids else "☐"
+        full_name = (member.name or "—").strip() if member else "—"
+        parts = full_name.split()
+        short_name = parts[-1] if len(parts) > 1 else full_name
+        btn_text = f"{icon} {short_name} — {task.title}"
+        if len(btn_text) > 60:
+            btn_text = btn_text[:59] + "…"
+        btn_rows.append([InlineKeyboardButton(
+            text=btn_text,
+            callback_data=f"bulk_toggle:{task.id}:{mid}"
+        )])
+
+    n = len(selected_ids)
+    action_row = [
+        InlineKeyboardButton(text=f"🗑 Удалить ({n})", callback_data=f"bulk_delete:{mid}"),
+        InlineKeyboardButton(text=f"✅ Принять ({n})", callback_data=f"bulk_confirm:{mid}"),
+    ]
+    control_row = [
+        InlineKeyboardButton(text="☑ Все", callback_data=f"bulk_all:{mid}"),
+        InlineKeyboardButton(text="☐ Снять", callback_data=f"bulk_none:{mid}"),
+        InlineKeyboardButton(text="✖ Отмена", callback_data=f"bulk_cancel:{mid}"),
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=btn_rows + [action_row, control_row])
+
+
+@router.callback_query(F.data.startswith("bulk_mode:"))
+async def cb_bulk_mode(callback: CallbackQuery, state: FSMContext):
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+    try:
+        mid = int(callback.data.split(":")[1])
+        rows = await _fetch_open_tasks_for_meeting(mid)
+        if not rows:
+            await callback.answer("Нет открытых задач", show_alert=True)
+            return
+
+        await state.set_state(BulkSelection.selecting)
+        await state.update_data(mid=mid, selected=[])
+
+        keyboard = _bulk_keyboard(rows, set(), mid)
+        await callback.message.answer(
+            "☑ <b>Режим выбора</b> — выбери задачи для действия:",
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+        await callback.answer()
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+@router.callback_query(BulkSelection.selecting, F.data.startswith("bulk_toggle:"))
+async def cb_bulk_toggle(callback: CallbackQuery, state: FSMContext):
+    try:
+        _, task_id_str, mid_str = callback.data.split(":")
+        task_id = int(task_id_str)
+        mid = int(mid_str)
+
+        data = await state.get_data()
+        selected = set(data.get("selected", []))
+        if task_id in selected:
+            selected.discard(task_id)
+        else:
+            selected.add(task_id)
+        await state.update_data(selected=list(selected))
+
+        rows = await _fetch_open_tasks_for_meeting(mid)
+        keyboard = _bulk_keyboard(rows, selected, mid)
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+        await callback.answer()
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+@router.callback_query(BulkSelection.selecting, F.data.startswith("bulk_all:"))
+async def cb_bulk_all(callback: CallbackQuery, state: FSMContext):
+    try:
+        mid = int(callback.data.split(":")[1])
+        rows = await _fetch_open_tasks_for_meeting(mid)
+        selected = {row[0].id for row in rows}
+        await state.update_data(selected=list(selected))
+
+        keyboard = _bulk_keyboard(rows, selected, mid)
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+        await callback.answer(f"Выбрано {len(selected)}")
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+@router.callback_query(BulkSelection.selecting, F.data.startswith("bulk_none:"))
+async def cb_bulk_none(callback: CallbackQuery, state: FSMContext):
+    try:
+        mid = int(callback.data.split(":")[1])
+        rows = await _fetch_open_tasks_for_meeting(mid)
+        await state.update_data(selected=[])
+
+        keyboard = _bulk_keyboard(rows, set(), mid)
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+        await callback.answer("Выделение снято")
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+@router.callback_query(BulkSelection.selecting, F.data.startswith("bulk_cancel:"))
+async def cb_bulk_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.delete()
+    await callback.answer("Отменено")
+
+
+@router.callback_query(BulkSelection.selecting, F.data.startswith("bulk_delete:"))
+async def cb_bulk_delete(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+    try:
+        data = await state.get_data()
+        selected = list(data.get("selected", []))
+        if not selected:
+            await callback.answer("Не выбрано ни одной задачи", show_alert=True)
+            return
+
+        async with async_session() as session:
+            tasks_result = await session.execute(
+                select(Task, Member)
+                .outerjoin(Member, Task.assignee_id == Member.id)
+                .where(Task.id.in_(selected))
+            )
+            task_rows = tasks_result.all()
+
+            await session.execute(sa_delete(TaskComment).where(TaskComment.task_id.in_(selected)))
+            await session.execute(sa_delete(Task).where(Task.id.in_(selected)))
+            await session.commit()
+
+        await state.clear()
+        await callback.message.delete()
+        await callback.message.answer(
+            f"🗑 <b>Удалено {len(selected)} задач</b>",
+            parse_mode="HTML",
+        )
+        await callback.answer(f"Удалено {len(selected)}")
+
+        notified = set()
+        for row in task_rows:
+            task, member = row[0], row[1]
+            if member and member.telegram_id and member.telegram_id > 0 and member.telegram_id not in notified:
+                notified.add(member.telegram_id)
+                try:
+                    await bot.send_message(
+                        member.telegram_id,
+                        f"🗑 <b>Председатель удалил несколько задач</b>",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
+
+
+@router.callback_query(BulkSelection.selecting, F.data.startswith("bulk_confirm:"))
+async def cb_bulk_confirm(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+    try:
+        data = await state.get_data()
+        selected = list(data.get("selected", []))
+        if not selected:
+            await callback.answer("Не выбрано ни одной задачи", show_alert=True)
+            return
+
+        now = datetime.utcnow()
+        async with async_session() as session:
+            tasks_result = await session.execute(
+                select(Task, Member)
+                .outerjoin(Member, Task.assignee_id == Member.id)
+                .where(Task.id.in_(selected))
+            )
+            task_rows = tasks_result.all()
+
+            for row in task_rows:
+                task = row[0]
+                task.status = "done"
+                task.completed_at = now
+                session.add(task)
+            await session.commit()
+
+        await state.clear()
+        await callback.message.delete()
+        await callback.message.answer(
+            f"✅ <b>Принято {len(selected)} задач</b>",
+            parse_mode="HTML",
+        )
+        await callback.answer(f"Принято {len(selected)}")
+
+        notified = set()
+        for row in task_rows:
+            task, member = row[0], row[1]
+            if member and member.telegram_id and member.telegram_id > 0 and member.telegram_id not in notified:
+                notified.add(member.telegram_id)
+                try:
+                    await bot.send_message(
+                        member.telegram_id,
+                        f"✅ <b>Председатель подтвердил выполнение задач</b>\n\n"
+                        f"<i>Несколько задач отмечены как выполненные.</i>",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
     except Exception as e:
         await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
 
@@ -712,7 +965,6 @@ async def cb_task_delete_confirm(callback: CallbackQuery, bot: Bot):
         assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
 
         # Delete comments first, then task
-        from sqlalchemy import delete as sa_delete
         await session.execute(sa_delete(TaskComment).where(TaskComment.task_id == task_id))
         await session.delete(task)
         await session.commit()
