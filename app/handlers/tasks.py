@@ -71,10 +71,11 @@ def _task_buttons(
     """One clickable button per task: icon + id + optional assignee + truncated title."""
     rows = []
     for item in task_rows:
-        if isinstance(item, (tuple, list)):
-            task, member = item[0], item[1]
-        else:
+        if isinstance(item, Task):
             task, member = item, None
+        else:
+            # SQLAlchemy Row from select(Task, Member)
+            task, member = item[0], item[1]
 
         icon = STATUS_ICON.get(task.status, "⬜")
 
@@ -237,7 +238,7 @@ async def _send_all_tasks(callback: CallbackQuery, page: int):
             return
 
         total = len(rows)
-        overdue_total = sum(1 for t, _ in rows if t.status == "overdue")
+        overdue_total = sum(1 for row in rows if row[0].status == "overdue")
         total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
         page = max(0, min(page, total_pages - 1))
 
@@ -334,8 +335,8 @@ async def cb_my_assigned(callback: CallbackQuery):
             await callback.answer()
             return
 
-        pending_cnt = sum(1 for t, _ in rows if t.status == "pending_done")
-        overdue_cnt = sum(1 for t, _ in rows if t.status == "overdue")
+        pending_cnt = sum(1 for row in rows if row[0].status == "pending_done")
+        overdue_cnt = sum(1 for row in rows if row[0].status == "overdue")
         badges = []
         if pending_cnt:
             badges.append(f"🟡 {pending_cnt} ждут подтверждения")
@@ -393,7 +394,8 @@ async def _send_dashboard_to(message):
 
     if active_rows:
         by_person: dict[str, int] = {}
-        for task, member in active_rows:
+        for row in active_rows:
+            task, member = row[0], row[1]
             name = (member.display_name or member.first_name) if member else "—"
             by_person[name] = by_person.get(name, 0) + 1
         text += "\n<b>Нагрузка по участникам:</b>\n"
