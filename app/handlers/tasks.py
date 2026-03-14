@@ -79,15 +79,13 @@ def _task_buttons(
 
         icon = STATUS_ICON.get(task.status, "⬜")
 
-        if show_assignee and member:
-            full_name = (member.name or member.first_name or member.username or "").strip()
+        if show_assignee:
+            full_name = (member.name or member.first_name or member.username or "—").strip() if member else "—"
             parts = full_name.split()
             short_name = parts[-1] if len(parts) > 1 else full_name
-            id_part = f"#{task.id} {short_name} — " if short_name else f"#{task.id} — "
+            btn_text = f"{icon} {short_name} — {task.title}"
         else:
-            id_part = f"#{task.id} — "
-
-        btn_text = f"{icon} {id_part}{task.title}"
+            btn_text = f"{icon} {task.title}"
         if len(btn_text) > 60:
             btn_text = btn_text[:59] + "…"
 
@@ -296,7 +294,7 @@ async def cb_tasks_by_meeting(callback: CallbackQuery):
                         Task.status.in_(["new", "in_progress", "overdue", "pending_done"]),
                         Task.meeting_id == None,
                     )
-                    .order_by(Task.deadline.asc())
+                    .order_by(Member.display_name.asc().nulls_last(), Task.deadline.asc().nulls_last())
                 )
                 header = "📌 <b>Без протокола</b>"
             else:
@@ -308,7 +306,7 @@ async def cb_tasks_by_meeting(callback: CallbackQuery):
                         Task.status.in_(["new", "in_progress", "overdue", "pending_done"]),
                         Task.meeting_id == mid,
                     )
-                    .order_by(Task.deadline.asc())
+                    .order_by(Member.display_name.asc().nulls_last(), Task.deadline.asc().nulls_last())
                 )
                 if meeting:
                     date_str = meeting.date.strftime("%d.%m.%Y")
