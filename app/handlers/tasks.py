@@ -259,7 +259,7 @@ async def cb_all_tasks(callback: CallbackQuery):
         btn_rows = []
         for mid, (meeting, cnt, ov) in sorted_groups:
             if mid == 0:
-                label = "📌 Без протокола"
+                label = "📌 Поручения председателя"
             else:
                 date_str = meeting.date.strftime("%d.%m.%Y") if meeting and meeting.date else "—"
                 title = (meeting.title or "Совещание")[:30]
@@ -300,7 +300,7 @@ async def cb_tasks_by_meeting(callback: CallbackQuery):
                     )
                     .order_by(Member.display_name.asc().nulls_last(), Task.deadline.asc().nulls_last())
                 )
-                header = "📌 <b>Без протокола</b>"
+                header = "📌 <b>Поручения председателя</b>"
             else:
                 meeting = await session.get(Meeting, mid)
                 result = await session.execute(
