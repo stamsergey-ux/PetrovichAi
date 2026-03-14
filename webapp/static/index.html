@@ -473,6 +473,8 @@ function TasksPage({ initialFilter = 'all', isChairman = false }) {
   const [sort, setSort] = useState('created_desc');
   const [sel, setSel] = useState(null); const [upd, setUpd] = useState(null); const [menu, setMenu] = useState(null);
   const [comments, setComments] = useState([]); const [cmtText, setCmtText] = useState(''); const [cmtLoading, setCmtLoading] = useState(false);
+  const [bulkMode, setBulkMode] = useState(false); const [selectedIds, setSelectedIds] = useState(new Set()); const [bulkLoading, setBulkLoading] = useState(false);
+  const [dlEdit, setDlEdit] = useState(false); const [dlVal, setDlVal] = useState('');
 
   const tabs = [{id:'all',label:'Все'},{id:'new',label:'Новые'},{id:'in_progress',label:'В работе'},{id:'overdue',label:'Просрочено'},{id:'pending_done',label:'На проверке'},{id:'done',label:'Выполнено'}];
   const sourceTabs = [{id:'all',label:'Все источники'},{id:'voice',label:'🎙 Голосовые'},{id:'stakeholder',label:'👔 Акционер'}];
@@ -532,6 +534,22 @@ function TasksPage({ initialFilter = 'all', isChairman = false }) {
     catch(e) { alert(e.message); }
   }
 
+  async function bulkOp(action) {
+    if (selectedIds.size === 0) return;
+    const label = action==='delete' ? 'удалить' : 'отметить выполненными';
+    if (!confirm(`${action==='delete'?'Удалить':'Подтвердить'} ${selectedIds.size} задач? Это действие нельзя отменить.`)) return;
+    setBulkLoading(true);
+    try {
+      await api('/api/tasks/bulk',{method:'POST',body:JSON.stringify({ids:[...selectedIds],action})});
+      setBulkMode(false); setSelectedIds(new Set()); setSel(null); load();
+    } catch(e) { alert(e.message); }
+    finally { setBulkLoading(false); }
+  }
+
+  function toggleSelect(id) {
+    setSelectedIds(prev => { const s = new Set(prev); s.has(id)?s.delete(id):s.add(id); return s; });
+  }
+
   const PORDER = {high:0,medium:1,low:2};
   const sorted = [...tasks].sort((a,b) => {
     if (sort==='created_desc') return new Date(b.created_at)-new Date(a.created_at);
@@ -540,6 +558,79 @@ function TasksPage({ initialFilter = 'all', isChairman = false }) {
     if (sort==='priority') return (PORDER[a.priority]??1)-(PORDER[b.priority]??1);
     return 0;
   });
+
+  // Group tasks by meeting when viewing closed tasks
+  const meetingGroups = filter === 'done' ? (() => {
+    const groups = {};
+    sorted.forEach(t => {
+      const key = t.meeting_id != null ? String(t.meeting_id) : '0';
+      const label = t.meeting_title || 'Поручения председателя';
+      if (!groups[key]) groups[key] = { label, tasks: [] };
+      groups[key].tasks.push(t);
+    });
+    return Object.values(groups).sort((a,b) => {
+      if (a.label==='Поручения председателя') return 1;
+      if (b.label==='Поручения председателя') return -1;
+      return a.label.localeCompare(b.label,'ru');
+    });
+  })() : null;
+
+  function renderTaskCard(t) {
+    const isSelected = selectedIds.has(t.id);
+    return (
+      <div key={t.id}
+        style={{background:'#fff',border:`1px solid ${isSelected?'#4f46e5':sel?.id===t.id?'#c4b5fd':'#e5e7eb'}`,borderRadius:12,padding:'11px 14px',cursor:'pointer',transition:'border-color 0.1s',boxShadow:isSelected?'0 0 0 3px rgba(79,70,229,0.12)':sel?.id===t.id?'0 0 0 3px rgba(196,181,253,0.2)':'none'}}
+        onClick={()=>{
+          if (bulkMode) { toggleSelect(t.id); return; }
+          setSel(sel?.id===t.id?null:t);
+        }}>
+        {/* Header: checkbox/dot + title + menu */}
+        <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
+          {bulkMode
+            ? <div style={{width:16,height:16,borderRadius:4,border:`2px solid ${isSelected?'#4f46e5':'#d1d5db'}`,background:isSelected?'#4f46e5':'#fff',flexShrink:0,marginTop:1,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                {isSelected&&<span style={{color:'#fff',fontSize:10,lineHeight:1}}>✓</span>}
+              </div>
+            : <SDot s={t.status}/>
+          }
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:'#111827',lineHeight:1.4,wordBreak:'break-word'}}>{t.title}</div>
+            {/* Meeting label */}
+            <div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:3}}>
+              {t.source==='stakeholder'&&<span className="pill p-stakeholder" style={{display:'inline-flex'}}>Акционер</span>}
+              {t.meeting_title
+                ? <span style={{fontSize:10,background:'#ede9fe',color:'#4f46e5',borderRadius:4,padding:'1px 5px',display:'inline-flex',alignItems:'center',gap:2}}>📋 {t.meeting_title}</span>
+                : <span style={{fontSize:10,background:'#fef3c7',color:'#b45309',borderRadius:4,padding:'1px 5px',display:'inline-flex',alignItems:'center',gap:2}}>📝 Поручения председателя</span>
+              }
+            </div>
+          </div>
+          {!bulkMode&&<div style={{position:'relative',flexShrink:0}} onClick={e=>e.stopPropagation()}>
+            <button onClick={e=>{e.stopPropagation();setMenu(menu===t.id?null:t.id);}}
+              style={{background:'none',border:'none',cursor:'pointer',padding:'2px 8px',borderRadius:6,color:'#9ca3af',fontSize:18,lineHeight:1,fontFamily:'inherit',letterSpacing:'1px'}}
+              title="Действия">···</button>
+            {menu===t.id&&(
+              <div style={{position:'absolute',right:0,top:'100%',marginTop:4,background:'#fff',border:'1px solid #e5e7eb',borderRadius:10,boxShadow:'0 8px 24px rgba(0,0,0,0.12)',zIndex:50,minWidth:200,overflow:'hidden'}}>
+                {t.status==='new'&&<button className="menu-item" onClick={()=>patch(t.id,{status:'in_progress'})} disabled={upd===t.id}>🔵 Взять в работу</button>}
+                {t.status!=='done'&&<button className="menu-item" onClick={()=>patch(t.id,{status:'done'})} disabled={upd===t.id}>✅ Отметить выполненным</button>}
+                {t.status==='pending_done'&&<button className="menu-item" onClick={()=>patch(t.id,{status:'done'})} disabled={upd===t.id}>✅ Подтвердить выполнение</button>}
+                {t.status==='done'&&<button className="menu-item" onClick={()=>patch(t.id,{status:'in_progress'})} disabled={upd===t.id}>🔄 Вернуть в работу</button>}
+                {t.status==='overdue'&&<button className="menu-item" onClick={()=>patch(t.id,{status:'in_progress'})} disabled={upd===t.id}>🔵 Возобновить</button>}
+                <div style={{height:1,background:'#f3f4f6',margin:'2px 0'}}/>
+                <button className="menu-item" style={{color:'#dc2626'}} onClick={()=>deleteTask(t.id)}>🗑 Удалить задачу</button>
+              </div>
+            )}
+          </div>}
+        </div>
+        {/* Meta row */}
+        <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap',paddingLeft:26,marginTop:7}}>
+          <SPill s={t.status}/>
+          {t.priority&&t.priority!=='medium'&&<PPill p={t.priority}/>}
+          {t.assignee&&<span style={{fontSize:11,color:'#6b7280'}}>👤 {t.assignee}</span>}
+          {t.deadline&&<span style={{fontSize:11,color:t.status==='overdue'?'#dc2626':'#6b7280',fontWeight:t.status==='overdue'?600:400}}>📅 {fmt(t.deadline)}</span>}
+          <span style={{fontSize:11,color:'#d1d5db',marginLeft:'auto'}}>#{t.id}</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page fade-up">
@@ -567,7 +658,7 @@ function TasksPage({ initialFilter = 'all', isChairman = false }) {
         </div>
       )}
 
-      {/* Sort */}
+      {/* Sort + bulk toggle */}
       <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap',marginBottom:14}}>
         <span style={{fontSize:11,color:'#9ca3af',fontWeight:600}}>Сортировка:</span>
         {sorts.map(s=>(
@@ -577,59 +668,60 @@ function TasksPage({ initialFilter = 'all', isChairman = false }) {
             {s.label}
           </button>
         ))}
+        {isChairman&&<button onClick={()=>{setBulkMode(v=>!v);setSelectedIds(new Set());}}
+          style={{marginLeft:'auto',padding:'3px 10px',borderRadius:6,fontSize:11,fontWeight:500,border:'1px solid',cursor:'pointer',fontFamily:'inherit',
+            background:bulkMode?'#4f46e5':'#fff',color:bulkMode?'#fff':'#6b7280',borderColor:bulkMode?'#4f46e5':'#e5e7eb'}}>
+          ☑ Выбрать
+        </button>}
       </div>
+
+      {/* Bulk action bar */}
+      {bulkMode&&(
+        <div style={{display:'flex',gap:8,alignItems:'center',background:'#ede9fe',borderRadius:10,padding:'10px 14px',marginBottom:12,flexWrap:'wrap'}}>
+          <span style={{fontSize:12,fontWeight:600,color:'#4f46e5',marginRight:4}}>Выбрано: {selectedIds.size}</span>
+          <button onClick={()=>setSelectedIds(new Set(sorted.map(t=>t.id)))}
+            style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #c4b5fd',background:'#fff',color:'#4f46e5',cursor:'pointer',fontFamily:'inherit'}}>
+            ☑ Все
+          </button>
+          <button onClick={()=>setSelectedIds(new Set())}
+            style={{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid #e5e7eb',background:'#fff',color:'#6b7280',cursor:'pointer',fontFamily:'inherit'}}>
+            ☐ Снять
+          </button>
+          {selectedIds.size>0&&<>
+            <button onClick={()=>bulkOp('done')} disabled={bulkLoading}
+              style={{fontSize:11,padding:'4px 12px',borderRadius:6,border:'none',background:'#10b981',color:'#fff',cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>
+              ✅ Подтвердить ({selectedIds.size})
+            </button>
+            <button onClick={()=>bulkOp('delete')} disabled={bulkLoading}
+              style={{fontSize:11,padding:'4px 12px',borderRadius:6,border:'none',background:'#ef4444',color:'#fff',cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>
+              🗑 Удалить ({selectedIds.size})
+            </button>
+          </>}
+        </div>
+      )}
 
       <div style={{display:'flex',gap:18,alignItems:'flex-start'}}>
         <div style={{flex:1,minWidth:0}}>
           {loading ? <Spinner/> : sorted.length===0 ? (
             <div className="card"><div className="empty-state"><div className="empty-text">Задач не найдено</div></div></div>
-          ) : (
-            <div style={{display:'flex',flexDirection:'column',gap:8}}>
-              {sorted.map(t=>(
-                <div key={t.id}
-                  style={{background:'#fff',border:`1px solid ${sel?.id===t.id?'#c4b5fd':'#e5e7eb'}`,borderRadius:12,padding:'14px 16px',cursor:'pointer',transition:'border-color 0.1s',boxShadow:sel?.id===t.id?'0 0 0 3px rgba(196,181,253,0.2)':'none'}}
-                  onClick={()=>setSel(sel?.id===t.id?null:t)}>
-
-                  {/* Header: dot + title + menu */}
-                  <div style={{display:'flex',alignItems:'flex-start',gap:10,marginBottom:t.description?8:10}}>
-                    <SDot s={t.status}/>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:600,color:'#111827',lineHeight:1.45,wordBreak:'break-word'}}>{t.title}</div>
-                      {t.source==='stakeholder'&&<span className="pill p-stakeholder" style={{marginTop:4,display:'inline-flex'}}>Акционер</span>}
-                    </div>
-                    <div style={{position:'relative',flexShrink:0}} onClick={e=>e.stopPropagation()}>
-                      <button onClick={e=>{e.stopPropagation();setMenu(menu===t.id?null:t.id);}}
-                        style={{background:'none',border:'none',cursor:'pointer',padding:'2px 8px',borderRadius:6,color:'#9ca3af',fontSize:18,lineHeight:1,fontFamily:'inherit',letterSpacing:'1px'}}
-                        title="Действия">···</button>
-                      {menu===t.id&&(
-                        <div style={{position:'absolute',right:0,top:'100%',marginTop:4,background:'#fff',border:'1px solid #e5e7eb',borderRadius:10,boxShadow:'0 8px 24px rgba(0,0,0,0.12)',zIndex:50,minWidth:200,overflow:'hidden'}}>
-                          {t.status==='new'&&<button className="menu-item" onClick={()=>patch(t.id,{status:'in_progress'})} disabled={upd===t.id}>🔵 Взять в работу</button>}
-                          {t.status!=='done'&&<button className="menu-item" onClick={()=>patch(t.id,{status:'done'})} disabled={upd===t.id}>✅ Отметить выполненным</button>}
-                          {t.status==='pending_done'&&<button className="menu-item" onClick={()=>patch(t.id,{status:'done'})} disabled={upd===t.id}>✅ Подтвердить выполнение</button>}
-                          {t.status==='done'&&<button className="menu-item" onClick={()=>patch(t.id,{status:'in_progress'})} disabled={upd===t.id}>🔄 Вернуть в работу</button>}
-                          {t.status==='overdue'&&<button className="menu-item" onClick={()=>patch(t.id,{status:'in_progress'})} disabled={upd===t.id}>🔵 Возобновить</button>}
-                          <div style={{height:1,background:'#f3f4f6',margin:'2px 0'}}/>
-                          <button className="menu-item" style={{color:'#dc2626'}} onClick={()=>deleteTask(t.id)}>🗑 Удалить задачу</button>
-                        </div>
-                      )}
-                    </div>
+          ) : meetingGroups ? (
+            /* Grouped view for "done" filter */
+            <div style={{display:'flex',flexDirection:'column',gap:16}}>
+              {meetingGroups.map(g=>(
+                <div key={g.label}>
+                  <div style={{fontSize:11,fontWeight:700,color:'#6b7280',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:6,paddingLeft:4,display:'flex',alignItems:'center',gap:6}}>
+                    <span style={{width:3,height:14,background:'#4f46e5',borderRadius:2,display:'inline-block'}}/>
+                    📋 {g.label} <span style={{color:'#9ca3af',fontWeight:400}}>({g.tasks.length})</span>
                   </div>
-
-                  {/* Full description */}
-                  {t.description&&(
-                    <div style={{fontSize:12,color:'#6b7280',lineHeight:1.65,marginBottom:10,paddingLeft:19,wordBreak:'break-word'}}>{t.description}</div>
-                  )}
-
-                  {/* Meta row */}
-                  <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',paddingLeft:19}}>
-                    <SPill s={t.status}/>
-                    {t.priority&&t.priority!=='medium'&&<PPill p={t.priority}/>}
-                    {t.assignee&&<span style={{fontSize:11,color:'#6b7280'}}>👤 {t.assignee}</span>}
-                    {t.deadline&&<span style={{fontSize:11,color:t.status==='overdue'?'#dc2626':'#6b7280',fontWeight:t.status==='overdue'?600:400}}>📅 {fmt(t.deadline)}</span>}
-                    <span style={{fontSize:11,color:'#d1d5db',marginLeft:'auto'}}>#{t.id}</span>
+                  <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                    {g.tasks.map(t=>renderTaskCard(t))}
                   </div>
                 </div>
               ))}
+            </div>
+          ) : (
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {sorted.map(t=>renderTaskCard(t))}
             </div>
           )}
         </div>
@@ -640,10 +732,32 @@ function TasksPage({ initialFilter = 'all', isChairman = false }) {
               <div style={{fontSize:13,fontWeight:700,color:'#111827',lineHeight:1.4}}>#{sel.id} {sel.title}</div>
               <button onClick={()=>setSel(null)} className="btn btn-ghost" style={{padding:4,flexShrink:0}}>{Ic.x}</button>
             </div>
+            {sel.meeting_title&&<div style={{marginBottom:10,fontSize:11,background:'#ede9fe',color:'#4f46e5',borderRadius:6,padding:'4px 8px',display:'inline-block'}}>📋 {sel.meeting_title}</div>}
+            {!sel.meeting_title&&<div style={{marginBottom:10,fontSize:11,background:'#fef3c7',color:'#b45309',borderRadius:6,padding:'4px 8px',display:'inline-block'}}>📝 Поручения председателя</div>}
             <div>
-              {[{l:'Статус',v:<SPill s={sel.status}/>},{l:'Приоритет',v:<PPill p={sel.priority}/>},{l:'Ответственный',v:<span style={{fontSize:12,fontWeight:500}}>{sel.assignee||'—'}</span>},{l:'Дедлайн',v:<span style={{fontSize:12}}>{fmt(sel.deadline)}</span>},{l:'Прогресс',v:<span style={{fontSize:12,fontWeight:600,color:'#4f46e5'}}>{sel.progress_percent}%</span>}].map(r=>(
-                <div key={r.l} className="detail-drow"><span className="dlabel">{r.l}</span>{r.v}</div>
-              ))}
+              <div className="detail-drow"><span className="dlabel">Статус</span><SPill s={sel.status}/></div>
+              <div className="detail-drow"><span className="dlabel">Приоритет</span><PPill p={sel.priority}/></div>
+              <div className="detail-drow"><span className="dlabel">Ответственный</span><span style={{fontSize:12,fontWeight:500}}>{sel.assignee||'—'}</span></div>
+              <div className="detail-drow">
+                <span className="dlabel">Дедлайн</span>
+                {dlEdit
+                  ? <div style={{display:'flex',gap:4,alignItems:'center'}}>
+                      <input type="date" value={dlVal} onChange={e=>setDlVal(e.target.value)}
+                        style={{fontSize:11,border:'1px solid #c4b5fd',borderRadius:6,padding:'3px 7px',outline:'none',fontFamily:'inherit'}}/>
+                      <button onClick={async()=>{await patch(sel.id,{deadline:dlVal||null});setSel(s=>s?{...s,deadline:dlVal}:s);setDlEdit(false);}}
+                        style={{fontSize:11,padding:'3px 8px',borderRadius:6,background:'#4f46e5',color:'#fff',border:'none',cursor:'pointer',fontFamily:'inherit'}}>✓</button>
+                      <button onClick={()=>setDlEdit(false)}
+                        style={{fontSize:11,padding:'3px 8px',borderRadius:6,background:'#f3f4f6',color:'#6b7280',border:'none',cursor:'pointer',fontFamily:'inherit'}}>✕</button>
+                    </div>
+                  : <span style={{fontSize:12,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}
+                      onClick={()=>{setDlEdit(true);setDlVal(sel.deadline?sel.deadline.split('T')[0]:'');}}
+                      title="Нажмите для изменения">
+                      {fmt(sel.deadline)}
+                      {isChairman&&<span style={{fontSize:10,color:'#9ca3af'}}>✎</span>}
+                    </span>
+                }
+              </div>
+              <div className="detail-drow"><span className="dlabel">Прогресс</span><span style={{fontSize:12,fontWeight:600,color:'#4f46e5'}}>{sel.progress_percent}%</span></div>
             </div>
             {sel.description&&<div style={{marginTop:14}}><div className="dlabel" style={{marginBottom:6}}>Описание</div><div style={{fontSize:12,color:'#6b7280',lineHeight:1.7,wordBreak:'break-word'}}>{sel.description}</div></div>}
             <div style={{marginTop:16,display:'flex',flexDirection:'column',gap:8}}>
@@ -1021,11 +1135,36 @@ function GanttPage() {
 }
 
 // ── Meetings ──────────────────────────────────────────────────────────────────
-function MeetingsPage() {
+function MeetingsPage({ isChairman = false }) {
   const [meetings, setMeetings] = useState([]); const [loading, setLoading] = useState(true);
   const [selId, setSelId] = useState(null); const [detail, setDetail] = useState(null); const [dLoad, setDLoad] = useState(false);
-  useEffect(()=>{ api('/api/meetings').then(d=>setMeetings(d.meetings)).finally(()=>setLoading(false)); },[]);
-  async function loadDetail(id) { setDLoad(true); setSelId(id); try { setDetail(await api(`/api/meetings/${id}`)); } finally { setDLoad(false); } }
+  const [editDate, setEditDate] = useState(false); const [dateVal, setDateVal] = useState('');
+  const [editTitle, setEditTitle] = useState(false); const [titleVal, setTitleVal] = useState('');
+  const [deleting, setDeleting] = useState(false);
+
+  function loadMeetings() { api('/api/meetings').then(d=>setMeetings(d.meetings)).finally(()=>setLoading(false)); }
+  useEffect(()=>{ loadMeetings(); },[]);
+  async function loadDetail(id) { setDLoad(true); setSelId(id); setEditDate(false); setEditTitle(false); try { setDetail(await api(`/api/meetings/${id}`)); } finally { setDLoad(false); } }
+
+  async function patchMeeting(body) {
+    if (!selId) return;
+    await api(`/api/meetings/${selId}`,{method:'PATCH',body:JSON.stringify(body)});
+    loadMeetings();
+    setDetail(d=>d?{...d,...body}:d);
+  }
+
+  async function deleteMeeting() {
+    if (!selId) return;
+    const m = meetings.find(x=>x.id===selId);
+    if (!confirm(`Удалить протокол «${m?.title||'Совещание'}»?\nВсе связанные задачи будут удалены. Это действие нельзя отменить.`)) return;
+    setDeleting(true);
+    try {
+      await api(`/api/meetings/${selId}`,{method:'DELETE'});
+      setSelId(null); setDetail(null); loadMeetings();
+    } catch(e){alert(e.message);}
+    finally{setDeleting(false);}
+  }
+
   return (
     <div className="page fade-up">
       <div style={{marginBottom:18}}><div className="page-title">Протоколы совещаний</div><div className="page-sub">{meetings.length} записей</div></div>
@@ -1058,8 +1197,47 @@ function MeetingsPage() {
             {dLoad ? <Spinner/> : detail ? (
               <>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14}}>
-                  <div><div style={{fontSize:14,fontWeight:700,color:'#111827'}}>{detail.title||'Совещание'}</div><div style={{fontSize:12,color:'#9ca3af',marginTop:3}}>{fmt(detail.date)}</div></div>
-                  <button onClick={()=>{setSelId(null);setDetail(null);}} className="btn btn-ghost" style={{padding:4}}>{Ic.x}</button>
+                  <div style={{flex:1,minWidth:0,marginRight:8}}>
+                    {/* Editable title */}
+                    {editTitle
+                      ? <div style={{display:'flex',gap:4,alignItems:'center',marginBottom:4}}>
+                          <input value={titleVal} onChange={e=>setTitleVal(e.target.value)}
+                            style={{flex:1,fontSize:13,fontWeight:700,border:'1px solid #c4b5fd',borderRadius:6,padding:'4px 8px',outline:'none',fontFamily:'inherit'}}/>
+                          <button onClick={async()=>{await patchMeeting({title:titleVal});setEditTitle(false);}}
+                            style={{fontSize:11,padding:'4px 8px',borderRadius:6,background:'#4f46e5',color:'#fff',border:'none',cursor:'pointer',fontFamily:'inherit'}}>✓</button>
+                          <button onClick={()=>setEditTitle(false)}
+                            style={{fontSize:11,padding:'4px 8px',borderRadius:6,background:'#f3f4f6',color:'#6b7280',border:'none',cursor:'pointer',fontFamily:'inherit'}}>✕</button>
+                        </div>
+                      : <div style={{fontSize:14,fontWeight:700,color:'#111827',cursor:isChairman?'pointer':'default',display:'flex',alignItems:'center',gap:4}}
+                          onClick={()=>{if(isChairman){setEditTitle(true);setTitleVal(detail.title||'');}}}
+                          title={isChairman?'Нажмите для редактирования':undefined}>
+                          {detail.title||'Совещание'}
+                          {isChairman&&<span style={{fontSize:11,color:'#9ca3af'}}>✎</span>}
+                        </div>
+                    }
+                    {/* Editable date */}
+                    {editDate
+                      ? <div style={{display:'flex',gap:4,alignItems:'center',marginTop:4}}>
+                          <input type="date" value={dateVal} onChange={e=>setDateVal(e.target.value)}
+                            style={{fontSize:11,border:'1px solid #c4b5fd',borderRadius:6,padding:'3px 7px',outline:'none',fontFamily:'inherit'}}/>
+                          <button onClick={async()=>{await patchMeeting({date:dateVal});setEditDate(false);}}
+                            style={{fontSize:11,padding:'3px 8px',borderRadius:6,background:'#4f46e5',color:'#fff',border:'none',cursor:'pointer',fontFamily:'inherit'}}>✓</button>
+                          <button onClick={()=>setEditDate(false)}
+                            style={{fontSize:11,padding:'3px 8px',borderRadius:6,background:'#f3f4f6',color:'#6b7280',border:'none',cursor:'pointer',fontFamily:'inherit'}}>✕</button>
+                        </div>
+                      : <div style={{fontSize:12,color:'#9ca3af',marginTop:3,cursor:isChairman?'pointer':'default',display:'flex',alignItems:'center',gap:4}}
+                          onClick={()=>{if(isChairman){setEditDate(true);setDateVal(detail.date?detail.date.split('T')[0]:'');}}}
+                          title={isChairman?'Нажмите для изменения даты':undefined}>
+                          {fmt(detail.date)}
+                          {isChairman&&<span style={{fontSize:10,color:'#d1d5db'}}>✎</span>}
+                        </div>
+                    }
+                  </div>
+                  <div style={{display:'flex',gap:4,flexShrink:0}}>
+                    {isChairman&&<button onClick={deleteMeeting} disabled={deleting}
+                      className="btn btn-ghost" style={{padding:4,color:'#dc2626'}} title="Удалить протокол">🗑</button>}
+                    <button onClick={()=>{setSelId(null);setDetail(null);setEditDate(false);setEditTitle(false);}} className="btn btn-ghost" style={{padding:4}}>{Ic.x}</button>
+                  </div>
                 </div>
                 {detail.participants && <div style={{marginBottom:12}}><div className="dlabel" style={{marginBottom:5}}>Участники</div><div style={{fontSize:12,color:'#6b7280'}}>{detail.participants}</div></div>}
                 {detail.summary && <div style={{marginBottom:12}}><div className="dlabel" style={{marginBottom:5}}>Резюме</div><div style={{fontSize:12,color:'#374151',lineHeight:1.7,whiteSpace:'pre-line'}}>{detail.summary}</div></div>}
@@ -1698,7 +1876,7 @@ function App() {
     dashboard: <DashboardPage setPage={setPage} goTasks={goTasks}/>,
     tasks:     <TasksPage key={taskFilter} initialFilter={taskFilter} isChairman={isChairman}/>,
     gantt:     <GanttPage/>,
-    meetings:  <MeetingsPage/>,
+    meetings:  <MeetingsPage isChairman={isChairman}/>,
     agenda:    <AgendaPage/>,
     workload:  <WorkloadPage/>,
     members:   <MembersPage/>,

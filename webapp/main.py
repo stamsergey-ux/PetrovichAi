@@ -216,7 +216,11 @@ async def get_tasks(
     user: str = Depends(get_current_user),
 ):
     async with async_session() as session:
-        q = select(Task, Member).outerjoin(Member, Task.assignee_id == Member.id)
+        q = (
+            select(Task, Member, Meeting)
+            .outerjoin(Member, Task.assignee_id == Member.id)
+            .outerjoin(Meeting, Task.meeting_id == Meeting.id)
+        )
         if status:
             q = q.where(Task.status == status)
         if priority:
@@ -237,11 +241,13 @@ async def get_tasks(
                 "deadline": t.deadline.isoformat() if t.deadline else None,
                 "assignee": m.name if m else None,
                 "assignee_id": t.assignee_id,
+                "meeting_id": t.meeting_id,
+                "meeting_title": mtg.title if mtg else None,
                 "source": t.source,
                 "progress_percent": t.progress_percent,
                 "created_at": t.created_at.isoformat(),
             }
-            for t, m in result.all()
+            for t, m, mtg in result.all()
         ]
     return {"tasks": tasks}
 
@@ -283,6 +289,34 @@ async def update_task(
         asyncio.create_task(_notify_chairman_tg(task_id, task_title, new_status, user))
 
     return {"ok": True}
+
+
+class BulkTaskBody(BaseModel):
+    ids: list[int]
+    action: str  # "delete" | "done"
+
+
+@app.post("/api/tasks/bulk")
+async def bulk_tasks(body: BulkTaskBody, user: str = Depends(get_current_user)):
+    if body.action not in ("delete", "done"):
+        raise HTTPException(400, "Неверное действие")
+    if not body.ids:
+        raise HTTPException(400, "Список задач пустой")
+    async with async_session() as session:
+        if body.action == "delete":
+            for tid in body.ids:
+                await session.execute(sql_delete(TaskComment).where(TaskComment.task_id == tid))
+            await session.execute(sql_delete(Task).where(Task.id.in_(body.ids)))
+        else:
+            tasks = (await session.execute(
+                select(Task).where(Task.id.in_(body.ids))
+            )).scalars().all()
+            for t in tasks:
+                t.status = "done"
+                t.progress_percent = 100
+                t.completed_at = datetime.utcnow()
+        await session.commit()
+    return {"ok": True, "count": len(body.ids)}
 
 
 @app.delete("/api/tasks/{task_id}")
@@ -660,6 +694,49 @@ async def get_meeting(meeting_id: int, user: str = Depends(get_current_user)):
         "tasks": tasks,
         "is_confirmed": meeting.is_confirmed,
     }
+
+
+@app.delete("/api/meetings/{meeting_id}")
+async def delete_meeting(meeting_id: int, user: str = Depends(get_current_user)):
+    async with async_session() as session:
+        meeting = (await session.execute(
+            select(Meeting).where(Meeting.id == meeting_id)
+        )).scalar_one_or_none()
+        if not meeting:
+            raise HTTPException(404, "Совещание не найдено")
+        task_ids = (await session.execute(
+            select(Task.id).where(Task.meeting_id == meeting_id)
+        )).scalars().all()
+        for tid in task_ids:
+            await session.execute(sql_delete(TaskComment).where(TaskComment.task_id == tid))
+        await session.execute(sql_delete(Task).where(Task.meeting_id == meeting_id))
+        await session.execute(sql_delete(Meeting).where(Meeting.id == meeting_id))
+        await session.commit()
+    return {"ok": True}
+
+
+@app.patch("/api/meetings/{meeting_id}")
+async def update_meeting(meeting_id: int, body: dict, user: str = Depends(get_current_user)):
+    allowed_fields = {"date", "title"}
+    updates = {k: v for k, v in body.items() if k in allowed_fields}
+    if not updates:
+        raise HTTPException(400, "Нет допустимых полей")
+    async with async_session() as session:
+        meeting = (await session.execute(
+            select(Meeting).where(Meeting.id == meeting_id)
+        )).scalar_one_or_none()
+        if not meeting:
+            raise HTTPException(404, "Совещание не найдено")
+        for k, v in updates.items():
+            if k == "date" and v:
+                from datetime import date as date_cls
+                try:
+                    v = datetime.fromisoformat(v).date()
+                except Exception:
+                    v = date_cls.fromisoformat(v)
+            setattr(meeting, k, v)
+        await session.commit()
+    return {"ok": True}
 
 
 # ── Agenda / Scheduled meetings ───────────────────────────────────────────────
