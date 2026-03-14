@@ -640,6 +640,11 @@ async def _show_advanced_menu(message: Message):
             InlineKeyboardButton(text="📊 Аналитика", callback_data="adv_analytics"),
             InlineKeyboardButton(text="📈 Гант (PDF)", callback_data="adv_gantt"),
         ],
+        # Section: System
+        [InlineKeyboardButton(text="── СИСТЕМА ──", callback_data="noop")],
+        [
+            InlineKeyboardButton(text="🔄 Обновить клавиатуры", callback_data="adv_refresh_keyboards"),
+        ],
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
@@ -722,6 +727,53 @@ async def cb_adv_gantt(callback: CallbackQuery):
         filename=f"gantt_{datetime.now().strftime('%Y%m%d')}.pdf"
     )
     await callback.message.answer_document(doc, caption="📊 Диаграмма Ганта — Совет Директоров")
+
+
+@router.callback_query(F.data == "adv_refresh_keyboards")
+async def cb_adv_refresh_keyboards(callback: CallbackQuery):
+    """Broadcast updated keyboards to all registered users silently."""
+    from aiogram import Bot
+    from app.utils import is_stakeholder
+    from app.handlers.onboarding import _persistent_keyboard, _stakeholder_keyboard
+
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Доступно администраторам", show_alert=True)
+        return
+
+    await callback.answer("Рассылаю обновлённые клавиатуры...")
+
+    bot: Bot = callback.bot
+    async with async_session() as session:
+        result = await session.execute(
+            select(Member).where(Member.telegram_id > 0)
+        )
+        members = result.scalars().all()
+
+    sent = 0
+    failed = 0
+    for member in members:
+        try:
+            if member.is_chairman:
+                kb = _persistent_keyboard(is_admin=True)
+            elif member.is_stakeholder:
+                kb = _stakeholder_keyboard()
+            else:
+                kb = _persistent_keyboard(is_admin=False)
+
+            await bot.send_message(
+                chat_id=member.telegram_id,
+                text="🔄 <b>Меню обновлено</b>",
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+            sent += 1
+        except Exception:
+            failed += 1
+
+    status = f"✅ Клавиатуры обновлены: {sent} пользователей"
+    if failed:
+        status += f"\n⚠️ Не удалось отправить: {failed}"
+    await callback.message.answer(status, parse_mode="HTML")
 
 
 @router.callback_query(F.data == "adv_schedule")
