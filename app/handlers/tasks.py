@@ -206,32 +206,64 @@ async def cb_my_tasks(callback: CallbackQuery):
     await callback.answer()
 
 
+PAGE_SIZE = 20
+
+
 @router.callback_query(F.data == "all_tasks")
 async def cb_all_tasks(callback: CallbackQuery):
-    async with async_session() as session:
-        result = await session.execute(
-            select(Task, Member)
-            .outerjoin(Member, Task.assignee_id == Member.id)
-            .where(Task.status.in_(["new", "in_progress", "overdue", "pending_done"]))
-            .order_by(Task.deadline.asc())
-        )
-        rows = result.all()
+    await _send_all_tasks(callback, page=0)
 
-    if not rows:
-        await callback.message.answer("🎉 <b>Нет открытых задач!</b>", parse_mode="HTML")
+
+@router.callback_query(F.data.startswith("all_tasks_page:"))
+async def cb_all_tasks_page(callback: CallbackQuery):
+    page = int(callback.data.split(":")[1])
+    await _send_all_tasks(callback, page=page)
+
+
+async def _send_all_tasks(callback: CallbackQuery, page: int):
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(Task, Member)
+                .outerjoin(Member, Task.assignee_id == Member.id)
+                .where(Task.status.in_(["new", "in_progress", "overdue", "pending_done"]))
+                .order_by(Task.deadline.asc())
+            )
+            rows = result.all()
+
+        if not rows:
+            await callback.message.answer("🎉 <b>Нет открытых задач!</b>", parse_mode="HTML")
+            await callback.answer()
+            return
+
+        total = len(rows)
+        overdue_total = sum(1 for t, _ in rows if t.status == "overdue")
+        total_pages = (total + PAGE_SIZE - 1) // PAGE_SIZE
+        page = max(0, min(page, total_pages - 1))
+
+        page_rows = rows[page * PAGE_SIZE: (page + 1) * PAGE_SIZE]
+
+        text = f"👥 <b>Все открытые задачи</b> — {total}"
+        if overdue_total:
+            text += f"\n🚨 {overdue_total} просрочено"
+        if total_pages > 1:
+            text += f"\n<i>Стр. {page + 1} из {total_pages}</i>"
+
+        task_rows = _task_buttons(page_rows, show_assignee=True)
+
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton(text="◀ Назад", callback_data=f"all_tasks_page:{page - 1}"))
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton(text="Вперёд ▶", callback_data=f"all_tasks_page:{page + 1}"))
+
+        all_rows = task_rows + ([nav_row] if nav_row else [])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=all_rows)
+
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
         await callback.answer()
-        return
-
-    overdue_total = sum(1 for t, _ in rows if t.status == "overdue")
-    text = f"👥 <b>Все открытые задачи</b> — {len(rows)}"
-    if overdue_total:
-        text += f"\n🚨 {overdue_total} просрочено"
-
-    task_rows = _task_buttons(rows, show_assignee=True)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=task_rows) if task_rows else None
-
-    await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
-    await callback.answer()
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
 
 
 @router.callback_query(F.data.startswith("task_detail:"))
@@ -271,51 +303,55 @@ async def cb_task_detail(callback: CallbackQuery):
 
 @router.callback_query(F.data == "my_assigned")
 async def cb_my_assigned(callback: CallbackQuery):
-    if not is_chairman(callback.from_user.username):
-        await callback.answer("⛔ Только для председателя", show_alert=True)
-        return
-
-    async with async_session() as session:
-        member = (await session.execute(
-            select(Member).where(Member.telegram_id == callback.from_user.id)
-        )).scalar_one_or_none()
-
-        if not member:
-            await callback.answer("Ты не зарегистрирован. Нажми /start")
+    try:
+        if not is_chairman(callback.from_user.username):
+            await callback.answer("⛔ Только для председателя", show_alert=True)
             return
 
-        result = await session.execute(
-            select(Task, Member)
-            .outerjoin(Member, Task.assignee_id == Member.id)
-            .where(Task.created_by_id == member.id)
-            .order_by(Task.created_at.desc())
-        )
-        rows = result.all()
+        async with async_session() as session:
+            member = (await session.execute(
+                select(Member).where(Member.telegram_id == callback.from_user.id)
+            )).scalar_one_or_none()
 
-    if not rows:
-        await callback.message.answer(
-            "📭 <b>Нет поручений.</b>\n\nЗадачи, поставленные тобой, появятся здесь.",
-            parse_mode="HTML",
-        )
+            if not member:
+                await callback.answer("Ты не зарегистрирован. Нажми /start")
+                return
+
+            result = await session.execute(
+                select(Task, Member)
+                .outerjoin(Member, Task.assignee_id == Member.id)
+                .where(Task.created_by_id == member.id)
+                .order_by(Task.created_at.desc())
+                .limit(30)
+            )
+            rows = result.all()
+
+        if not rows:
+            await callback.message.answer(
+                "📭 <b>Нет поручений.</b>\n\nЗадачи, поставленные тобой, появятся здесь.",
+                parse_mode="HTML",
+            )
+            await callback.answer()
+            return
+
+        pending_cnt = sum(1 for t, _ in rows if t.status == "pending_done")
+        overdue_cnt = sum(1 for t, _ in rows if t.status == "overdue")
+        badges = []
+        if pending_cnt:
+            badges.append(f"🟡 {pending_cnt} ждут подтверждения")
+        if overdue_cnt:
+            badges.append(f"🚨 {overdue_cnt} просрочено")
+        badge_str = ("\n" + " · ".join(badges)) if badges else ""
+
+        text = f"📋 <b>Мои поручения</b> — {len(rows)} задач{badge_str}"
+
+        task_rows = _task_buttons(rows, show_assignee=True)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=task_rows) if task_rows else None
+
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
         await callback.answer()
-        return
-
-    pending_cnt = sum(1 for t, _ in rows if t.status == "pending_done")
-    overdue_cnt = sum(1 for t, _ in rows if t.status == "overdue")
-    badges = []
-    if pending_cnt:
-        badges.append(f"🟡 {pending_cnt} ждут подтверждения")
-    if overdue_cnt:
-        badges.append(f"🚨 {overdue_cnt} просрочено")
-    badge_str = ("\n" + " · ".join(badges)) if badges else ""
-
-    text = f"📋 <b>Мои поручения</b> — {len(rows)} задач{badge_str}"
-
-    task_rows = _task_buttons(rows, show_assignee=True)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=task_rows) if task_rows else None
-
-    await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
-    await callback.answer()
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
 
 
 @router.callback_query(F.data == "dashboard_cb")
