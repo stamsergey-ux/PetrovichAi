@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 
 from aiogram import Router, F
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy import select
 
@@ -302,12 +303,12 @@ async def cb_view_protocol(callback: CallbackQuery):
 
 
 @router.message(F.text)
-async def handle_text_message(message: Message):
+async def handle_text_message(message: Message, state: FSMContext):
     """Handle all text messages as AI chat (catch-all handler, must be registered last)."""
-    await _dispatch_text(message, message.text)
+    await _dispatch_text(message, message.text, state)
 
 
-async def _dispatch_text(message: Message, raw_text: str):
+async def _dispatch_text(message: Message, raw_text: str, state: FSMContext | None = None):
     """Dispatch a text (from keyboard or transcribed voice) to the right handler."""
     text = raw_text.strip().lower()
 
@@ -362,7 +363,7 @@ async def _dispatch_text(message: Message, raw_text: str):
         return await show_materials(message)
 
     # For everything else — AI chat with RAG
-    await _ai_chat(message, override_text=raw_text)
+    await _ai_chat(message, override_text=raw_text, state=state)
 
 
 async def _show_my_tasks(message: Message):
@@ -817,7 +818,30 @@ async def _get_my_tasks_summary(telegram_id: int) -> str | None:
     return "\n".join(lines)
 
 
-async def _ai_chat(message: Message, override_text: str | None = None):
+async def _get_task_context(task_id: int) -> str | None:
+    """Fetch full task details for AI context."""
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if not task:
+            return None
+        assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
+        meeting = await session.get(Meeting, task.meeting_id) if task.meeting_id else None
+    assignee_name = assignee.name if assignee else "не назначен"
+    deadline = task.deadline.strftime("%d.%m.%Y") if task.deadline else "без срока"
+    meeting_str = (meeting.title or f"Совещание {meeting.date.strftime('%d.%m.%Y')}") if meeting else "Поручения председателя"
+    lines = [
+        f"#{task.id} [{task.status}] {task.title}",
+        f"Исполнитель: {assignee_name}, Дедлайн: {deadline}",
+        f"Протокол: {meeting_str}",
+    ]
+    if task.description:
+        lines.append(f"Описание: {task.description}")
+    if task.context_quote:
+        lines.append(f"Контекст из протокола: {task.context_quote}")
+    return "\n".join(lines)
+
+
+async def _ai_chat(message: Message, override_text: str | None = None, state: FSMContext | None = None):
     """Handle free-form AI chat with RAG context."""
     from app.utils import is_stakeholder
     user = message.from_user
@@ -830,6 +854,14 @@ async def _ai_chat(message: Message, override_text: str | None = None):
         user_role = "Акционер"
     else:
         user_role = "Член совета директоров"
+
+    # Check if user was looking at a specific task (context from task_detail)
+    task_context = None
+    if state:
+        data = await state.get_data()
+        last_task_id = data.get("last_task_id")
+        if last_task_id:
+            task_context = await _get_task_context(last_task_id)
 
     # Search relevant meeting chunks
     chunks = await search_relevant_chunks(user_text, limit=5)
@@ -845,6 +877,7 @@ async def _ai_chat(message: Message, override_text: str | None = None):
         tasks_summary=tasks_summary,
         user_role=user_role,
         my_tasks_summary=my_tasks,
+        task_context=task_context,
     )
 
     # Split long responses

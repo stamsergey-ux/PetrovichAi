@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from aiogram import Router, F, Bot
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from app.voice import transcribe_voice
@@ -13,28 +14,24 @@ router = Router()
 
 
 @router.message(F.voice)
-async def handle_voice(message: Message, bot: Bot):
+async def handle_voice(message: Message, bot: Bot, state: FSMContext):
     """Handle voice messages: transcribe via Whisper, then process as text command."""
     await message.answer("🎙 Распознаю голосовое сообщение...")
 
     try:
-        # Download voice file
         file = await bot.download(message.voice)
         file_bytes = file.read()
 
-        # Transcribe
         text = await transcribe_voice(file_bytes, ".ogg")
 
         if not text:
             await message.answer("⚠️ Не удалось распознать голосовое сообщение. Попробуй ещё раз или напиши текстом.")
             return
 
-        # Show transcription
         await message.answer(f"📝 <i>Распознано:</i>\n{text}", parse_mode="HTML")
 
-        # Process transcribed text as a command/AI query
         from app.handlers.chat import _dispatch_text
-        await _dispatch_text(message, text)
+        await _dispatch_text(message, text, state)
 
     except Exception as e:
         logger.error(f"Voice processing error: {e}")
@@ -42,7 +39,7 @@ async def handle_voice(message: Message, bot: Bot):
 
 
 @router.message(F.video_note)
-async def handle_video_note(message: Message, bot: Bot):
+async def handle_video_note(message: Message, bot: Bot, state: FSMContext):
     """Handle video notes (round videos): transcribe audio track."""
     await message.answer("🎙 Распознаю аудио из видеосообщения...")
 
@@ -59,7 +56,7 @@ async def handle_video_note(message: Message, bot: Bot):
         await message.answer(f"📝 <i>Распознано:</i>\n{text}", parse_mode="HTML")
 
         from app.handlers.chat import _dispatch_text
-        await _dispatch_text(message, text)
+        await _dispatch_text(message, text, state)
 
     except Exception as e:
         logger.error(f"Video note processing error: {e}")

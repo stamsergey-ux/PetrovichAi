@@ -102,13 +102,13 @@ def _task_buttons(
 
         if show_assignee:
             full_name = (member.name or member.first_name or member.username or "—").strip() if member else "—"
-            parts = full_name.split()
-            short_name = parts[-1] if len(parts) > 1 else full_name
-            btn_text = f"{icon} {short_name} — {task.title}"
+            # First name only to save space but stay readable
+            short_name = full_name.split()[0] if full_name.split() else full_name
+            btn_text = f"{icon} {short_name}: {task.title}"
         else:
-            btn_text = f"{icon} {task.title}"
-        if len(btn_text) > 60:
-            btn_text = btn_text[:59] + "…"
+            btn_text = f"{icon} #{task.id} {task.title}"
+        if len(btn_text) > 96:
+            btn_text = btn_text[:95] + "…"
 
         rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"task_detail:{task.id}")])
     return rows
@@ -601,7 +601,7 @@ async def cb_bulk_confirm(callback: CallbackQuery, state: FSMContext, bot: Bot):
 
 
 @router.callback_query(F.data.startswith("task_detail:"))
-async def cb_task_detail(callback: CallbackQuery):
+async def cb_task_detail(callback: CallbackQuery, state: FSMContext):
     task_id = int(callback.data.split(":")[1])
     async with async_session() as session:
         task = await session.get(Task, task_id)
@@ -628,6 +628,13 @@ async def cb_task_detail(callback: CallbackQuery):
     admin = is_chairman(callback.from_user.username)
     is_assignee = bool(assignee and assignee.telegram_id == callback.from_user.id)
     keyboard = _task_keyboard(task_id, task.status, is_admin=admin, is_assignee=is_assignee) if (admin or is_assignee) else None
+
+    # Save last viewed task in FSM for AI chat context
+    await state.update_data(last_task_id=task_id)
+
+    # Add hint for assignee
+    if is_assignee and task.status not in ("done",):
+        text += "\n\n💡 <i>Есть вопросы? Используй кнопку ниже — председатель ответит прямо здесь.</i>"
 
     await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
