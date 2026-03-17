@@ -24,6 +24,18 @@ class BroadcastState(StatesGroup):
     waiting_changelog = State()
 
 
+# ── Changelog — update this with every deploy ──────────────────────────────────
+CURRENT_CHANGELOG = """✅ Что нового в боте:
+
+• <b>Комментировать задачи</b> — кнопка 💬 теперь работает. Можно оставлять голосовые и текстовые комментарии. Вторая сторона получает уведомление.
+
+• <b>Уточняющие вопросы</b> — исполнитель может нажать ❓ в карточке задачи, задать вопрос голосом или текстом. Председатель отвечает — ответ приходит исполнителю.
+
+• <b>Отслеживание задачи после постановки</b> — сразу после создания задачи появляются кнопки "Открыть задачу" и "Все задачи".
+
+• <b>ИИ помнит контекст</b> — если открыл карточку задачи и задал вопрос боту, он отвечает именно про эту задачу, не переспрашивая."""
+
+
 def _escape_md(text: str) -> str:
     """Escape special characters for MarkdownV2."""
     special = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
@@ -748,14 +760,17 @@ async def cb_adv_refresh_keyboards(callback: CallbackQuery, state: FSMContext):
     await state.set_state(BroadcastState.waiting_changelog)
     await callback.answer()
     await callback.message.answer(
-        "📣 <b>Рассылка обновления</b>\n\n"
-        "Напиши, что изменилось — пользователи увидят это сообщение вместе с обновлённым меню.\n\n"
-        "<i>Например: «Добавлена кнопка Комментировать в задачах. Теперь можно оставлять голосовые комментарии.»</i>",
+        f"📣 <b>Рассылка обновления</b>\n\n"
+        f"Подготовлен текст для рассылки:\n\n"
+        f"<blockquote>{CURRENT_CHANGELOG}</blockquote>\n\n"
+        f"Отправь этот текст или напиши свой:",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="📤 Отправить без комментария", callback_data="broadcast_no_note"),
-            InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast_cancel"),
-        ]]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📤 Отправить этот текст", callback_data="broadcast_use_default")],
+            [InlineKeyboardButton(text="✏️ Написать свой", callback_data="broadcast_custom")],
+            [InlineKeyboardButton(text="🔇 Без комментария", callback_data="broadcast_no_note")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast_cancel")],
+        ]),
     )
 
 
@@ -764,6 +779,19 @@ async def cb_broadcast_cancel(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.answer("Отменено.")
     await callback.answer()
+
+
+@router.callback_query(F.data == "broadcast_use_default")
+async def cb_broadcast_use_default(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.answer()
+    await _do_broadcast(callback.message, callback.bot, note=CURRENT_CHANGELOG)
+
+
+@router.callback_query(F.data == "broadcast_custom")
+async def cb_broadcast_custom(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await callback.message.answer("✏️ Напиши свой текст обновления:")
 
 
 @router.callback_query(F.data == "broadcast_no_note")
