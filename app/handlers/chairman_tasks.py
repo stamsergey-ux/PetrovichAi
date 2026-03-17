@@ -171,6 +171,7 @@ async def confirm_chairman_task(callback: CallbackQuery, state: FSMContext, bot:
         task_id = task.id
 
     await state.clear()
+    await state.update_data(last_task_id=task_id)  # keep context for follow-up AI questions
     await callback.answer()
 
     deadline_disp = deadline.strftime("%d.%m.%Y") if deadline else "без срока"

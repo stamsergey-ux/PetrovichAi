@@ -40,7 +40,7 @@ async def _get_tasks_summary(user_id: int | None = None) -> str:
         query = (
             select(Task, Member)
             .outerjoin(Member, Task.assignee_id == Member.id)
-            .where(Task.status.in_(["new", "in_progress", "overdue"]))
+            .where(Task.status.in_(["new", "in_progress", "overdue", "pending_done"]))
             .where(Task.is_verified == True)
             .order_by(Task.deadline.asc())
         )
