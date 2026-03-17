@@ -7,6 +7,7 @@ from datetime import datetime
 
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy import select
 
@@ -17,6 +18,10 @@ from app.gantt import generate_gantt_pdf
 from app.utils import is_chairman
 
 router = Router()
+
+
+class BroadcastState(StatesGroup):
+    waiting_changelog = State()
 
 
 def _escape_md(text: str) -> str:
@@ -734,30 +739,69 @@ async def cb_adv_gantt(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "adv_refresh_keyboards")
-async def cb_adv_refresh_keyboards(callback: CallbackQuery):
-    """Broadcast updated keyboards to all registered users silently."""
-    from aiogram import Bot
-    from app.utils import is_stakeholder
-    from app.handlers.onboarding import _persistent_keyboard, _stakeholder_keyboard
-
+async def cb_adv_refresh_keyboards(callback: CallbackQuery, state: FSMContext):
+    """Ask chairman for a changelog note before broadcasting keyboards."""
     if not is_chairman(callback.from_user.username):
         await callback.answer("⛔ Доступно администраторам", show_alert=True)
         return
 
-    await callback.answer("Рассылаю обновлённые клавиатуры...")
+    await state.set_state(BroadcastState.waiting_changelog)
+    await callback.answer()
+    await callback.message.answer(
+        "📣 <b>Рассылка обновления</b>\n\n"
+        "Напиши, что изменилось — пользователи увидят это сообщение вместе с обновлённым меню.\n\n"
+        "<i>Например: «Добавлена кнопка Комментировать в задачах. Теперь можно оставлять голосовые комментарии.»</i>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="📤 Отправить без комментария", callback_data="broadcast_no_note"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast_cancel"),
+        ]]),
+    )
 
-    bot: Bot = callback.bot
+
+@router.callback_query(F.data == "broadcast_cancel")
+async def cb_broadcast_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.answer("Отменено.")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "broadcast_no_note")
+async def cb_broadcast_no_note(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.answer()
+    await _do_broadcast(callback.message, callback.bot, note=None)
+
+
+@router.message(BroadcastState.waiting_changelog, F.text)
+async def process_changelog(message: Message, state: FSMContext):
+    await state.clear()
+    await _do_broadcast(message, message.bot, note=message.text.strip())
+
+
+async def _do_broadcast(trigger_message, bot, note: str | None):
+    """Send updated keyboards (+ optional changelog note) to all members."""
+    from app.utils import is_stakeholder
+    from app.handlers.onboarding import _persistent_keyboard, _stakeholder_keyboard
+
     async with async_session() as session:
-        result = await session.execute(
+        members = (await session.execute(
             select(Member).where(Member.telegram_id > 0)
+        )).scalars().all()
+
+    if note:
+        broadcast_text = (
+            f"🔄 <b>Обновление бота</b>\n\n"
+            f"{note}"
         )
-        members = result.scalars().all()
+    else:
+        broadcast_text = "🔄 <b>Меню обновлено</b>"
 
     sent = 0
     failed = 0
     for member in members:
         try:
-            if member.is_chairman:
+            if is_chairman(member.username):
                 kb = _persistent_keyboard(is_admin=True)
             elif member.is_stakeholder:
                 kb = _stakeholder_keyboard()
@@ -766,7 +810,7 @@ async def cb_adv_refresh_keyboards(callback: CallbackQuery):
 
             await bot.send_message(
                 chat_id=member.telegram_id,
-                text="🔄 <b>Меню обновлено</b>",
+                text=broadcast_text,
                 parse_mode="HTML",
                 reply_markup=kb,
             )
@@ -774,10 +818,10 @@ async def cb_adv_refresh_keyboards(callback: CallbackQuery):
         except Exception:
             failed += 1
 
-    status = f"✅ Клавиатуры обновлены: {sent} пользователей"
+    status = f"✅ Разослано: {sent} пользователей"
     if failed:
-        status += f"\n⚠️ Не удалось отправить: {failed}"
-    await callback.message.answer(status, parse_mode="HTML")
+        status += f"\n⚠️ Не доставлено: {failed}"
+    await trigger_message.answer(status, parse_mode="HTML")
 
 
 @router.callback_query(F.data == "adv_schedule")
