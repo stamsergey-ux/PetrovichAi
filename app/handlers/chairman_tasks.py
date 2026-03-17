@@ -177,10 +177,16 @@ async def confirm_chairman_task(callback: CallbackQuery, state: FSMContext, bot:
     deadline_disp = deadline.strftime("%d.%m.%Y") if deadline else "без срока"
     creator_name = creator.display_name or creator.first_name or "Председатель" if creator else "Председатель"
 
+    view_kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=f"📋 Открыть задачу #{task_id}", callback_data=f"task_detail:{task_id}"),
+        InlineKeyboardButton(text="👥 Все задачи", callback_data="all_tasks"),
+    ]])
     await callback.message.answer(
         f"✅ <b>Задача #{task_id} поставлена!</b>\n"
+        f"📌 Поручения председателя\n"
         f"Ожидаю подтверждения от исполнителя.",
         parse_mode="HTML",
+        reply_markup=view_kb,
     )
 
     # Notify assignee with acknowledgment button
