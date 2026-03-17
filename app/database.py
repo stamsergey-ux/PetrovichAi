@@ -98,6 +98,7 @@ class TaskComment(Base):
     author_id = Column(Integer, ForeignKey("members.id"), nullable=True)
     author_email = Column(Text, nullable=True)  # for web-posted comments
     text = Column(Text, nullable=False)
+    comment_type = Column(String(20), default="comment")  # comment, question, answer
     created_at = Column(DateTime, default=datetime.utcnow)
 
     task = relationship("Task", back_populates="comments")
@@ -270,6 +271,7 @@ async def _migrate_db():
                 "ALTER TABLE meetings ADD COLUMN transcript_hash VARCHAR(16)",
                 "ALTER TABLE tasks ADD COLUMN completion_comment TEXT",
                 "ALTER TABLE tasks ADD COLUMN last_notified_at DATETIME",
+                "ALTER TABLE task_comments ADD COLUMN comment_type VARCHAR(20) DEFAULT 'comment'",
                 "CREATE TABLE IF NOT EXISTS meeting_materials (id INTEGER PRIMARY KEY, uploader_id INTEGER REFERENCES members(id), meeting_id INTEGER REFERENCES meetings(id), file_id VARCHAR(500) NOT NULL, file_name VARCHAR(500), file_type VARCHAR(20), description TEXT, created_at DATETIME)",
             ]:
                 try:

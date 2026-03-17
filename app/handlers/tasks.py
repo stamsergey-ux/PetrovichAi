@@ -28,6 +28,11 @@ class TaskEditDeadline(StatesGroup):
     waiting_date = State()
 
 
+class TaskQuestion(StatesGroup):
+    waiting_question = State()   # assignee typing/recording their question
+    waiting_answer = State()     # chairman typing/recording their answer
+
+
 # Status icons including pending_done
 STATUS_ICON = {
     "new": "⬜",
@@ -38,7 +43,7 @@ STATUS_ICON = {
 }
 
 
-def _task_keyboard(task_id: int, status: str, is_admin: bool = False) -> InlineKeyboardMarkup:
+def _task_keyboard(task_id: int, status: str, is_admin: bool = False, is_assignee: bool = False) -> InlineKeyboardMarkup:
     buttons = []
     if status == "pending_done":
         buttons.append([
@@ -52,6 +57,11 @@ def _task_keyboard(task_id: int, status: str, is_admin: bool = False) -> InlineK
     buttons.append([
         InlineKeyboardButton(text="💬 Комментировать", callback_data=f"task_comment:{task_id}"),
     ])
+    # Assignee (non-admin) can ask a clarification question on active tasks
+    if is_assignee and not is_admin and status not in ("done",):
+        buttons.append([
+            InlineKeyboardButton(text="❓ Задать вопрос председателю", callback_data=f"task_ask:{task_id}"),
+        ])
     if is_admin:
         buttons.append([
             InlineKeyboardButton(text="📅 Изменить срок", callback_data=f"task_edit_deadline:{task_id}"),
@@ -616,8 +626,8 @@ async def cb_task_detail(callback: CallbackQuery):
     )
 
     admin = is_chairman(callback.from_user.username)
-    is_assignee = assignee and assignee.telegram_id == callback.from_user.id
-    keyboard = _task_keyboard(task_id, task.status, is_admin=admin) if (admin or is_assignee) else None
+    is_assignee = bool(assignee and assignee.telegram_id == callback.from_user.id)
+    keyboard = _task_keyboard(task_id, task.status, is_admin=admin, is_assignee=is_assignee) if (admin or is_assignee) else None
 
     await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
@@ -1320,3 +1330,263 @@ async def cb_all_closed_meeting(callback: CallbackQuery):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=task_rows + [back_row]),
     )
     await callback.answer()
+
+
+# ── Q&A: assignee asks clarification question ─────────────────────────────────
+
+@router.callback_query(F.data.startswith("task_ask:"))
+async def cb_ask_question(callback: CallbackQuery, state: FSMContext):
+    task_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if not task:
+            await callback.answer("Задача не найдена", show_alert=True)
+            return
+        assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
+        if not assignee or assignee.telegram_id != callback.from_user.id:
+            await callback.answer("Только исполнитель может задать вопрос", show_alert=True)
+            return
+
+    await state.set_state(TaskQuestion.waiting_question)
+    await state.update_data(task_id=task_id)
+    await callback.message.answer(
+        f"❓ <b>Вопрос по задаче #{task_id}</b>\n\n"
+        "Напишите или запишите голосовое сообщение с вашим вопросом.\n"
+        "Председатель получит уведомление и сможет ответить.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="❌ Отмена", callback_data="qa_cancel"),
+        ]]),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "qa_cancel")
+async def cb_qa_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.answer("Отменено.")
+    await callback.answer()
+
+
+@router.message(TaskQuestion.waiting_question, F.text)
+async def process_question_text(message: Message, state: FSMContext):
+    data = await state.get_data()
+    task_id = data.get("task_id")
+    await state.clear()
+    await _submit_question(task_id, message.from_user.id, message.text.strip(), message.bot, message)
+
+
+@router.message(TaskQuestion.waiting_question, F.voice)
+async def process_question_voice(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    task_id = data.get("task_id")
+    await message.answer("🎙 Распознаю голосовое сообщение...")
+    try:
+        from app.voice import transcribe_voice
+        file = await bot.download(message.voice)
+        text = await transcribe_voice(file.read(), ".ogg")
+        if not text:
+            await message.answer("❌ Не удалось распознать голос. Напишите вопрос текстом.")
+            return
+        await state.clear()
+        await _submit_question(task_id, message.from_user.id, text, bot, message)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка распознавания: {e}")
+
+
+async def _submit_question(task_id: int, author_tg_id: int, text: str, bot: Bot, message: Message):
+    """Save question comment and notify all chairmen."""
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if not task:
+            await message.answer("❌ Задача не найдена.")
+            return
+
+        author = (await session.execute(
+            select(Member).where(Member.telegram_id == author_tg_id)
+        )).scalar_one_or_none()
+
+        comment = TaskComment(
+            task_id=task_id,
+            author_id=author.id if author else None,
+            text=text,
+            comment_type="question",
+        )
+        session.add(comment)
+        await session.commit()
+        await session.refresh(comment)
+
+        chairmen = (await session.execute(
+            select(Member).where(Member.is_chairman == True)
+        )).scalars().all()
+
+        author_name = escape(author.name if author else "Исполнитель")
+        task_title = escape(task.title)
+        comment_id = comment.id
+
+    await message.answer(
+        "✅ Вопрос отправлен председателю.\nОжидайте ответа — он придёт сюда.",
+        parse_mode="HTML",
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="💬 Ответить", callback_data=f"task_reply:{task_id}:{comment_id}"),
+    ]])
+    for ch in chairmen:
+        if ch.telegram_id and ch.telegram_id > 0:
+            try:
+                await bot.send_message(
+                    ch.telegram_id,
+                    f"❓ <b>Вопрос по задаче #{task_id}</b>\n\n"
+                    f"<b>{task_title}</b>\n\n"
+                    f"👤 <b>{author_name}</b> спрашивает:\n"
+                    f"<i>{escape(text)}</i>",
+                    parse_mode="HTML",
+                    reply_markup=kb,
+                )
+            except Exception:
+                pass
+
+
+# ── Q&A: chairman answers ───────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("task_reply:"))
+async def cb_answer_question(callback: CallbackQuery, state: FSMContext):
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Только для председателя", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    task_id = int(parts[1])
+    comment_id = int(parts[2])
+
+    await state.set_state(TaskQuestion.waiting_answer)
+    await state.update_data(task_id=task_id, question_comment_id=comment_id)
+    await callback.message.answer(
+        f"💬 <b>Ответ на вопрос по задаче #{task_id}</b>\n\n"
+        "Напишите или запишите голосовой ответ:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="❌ Отмена", callback_data="qa_cancel"),
+        ]]),
+    )
+    await callback.answer()
+
+
+@router.message(TaskQuestion.waiting_answer, F.text)
+async def process_answer_text(message: Message, state: FSMContext):
+    data = await state.get_data()
+    task_id = data.get("task_id")
+    await state.clear()
+    await _submit_answer(task_id, message.from_user.id, message.text.strip(), message.bot, message)
+
+
+@router.message(TaskQuestion.waiting_answer, F.voice)
+async def process_answer_voice(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    task_id = data.get("task_id")
+    await message.answer("🎙 Распознаю голосовой ответ...")
+    try:
+        from app.voice import transcribe_voice
+        file = await bot.download(message.voice)
+        text = await transcribe_voice(file.read(), ".ogg")
+        if not text:
+            await message.answer("❌ Не удалось распознать. Напишите ответ текстом.")
+            return
+        await state.clear()
+        await _submit_answer(task_id, message.from_user.id, text, bot, message)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка распознавания: {e}")
+
+
+async def _submit_answer(task_id: int, chairman_tg_id: int, text: str, bot: Bot, message: Message):
+    """Save answer comment and notify the assignee."""
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if not task:
+            await message.answer("❌ Задача не найдена.")
+            return
+
+        chairman = (await session.execute(
+            select(Member).where(Member.telegram_id == chairman_tg_id)
+        )).scalar_one_or_none()
+
+        comment = TaskComment(
+            task_id=task_id,
+            author_id=chairman.id if chairman else None,
+            text=text,
+            comment_type="answer",
+        )
+        session.add(comment)
+        await session.commit()
+
+        assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
+        chairman_name = escape(chairman.name if chairman else "Председатель")
+        task_title = escape(task.title)
+
+    await message.answer("✅ Ответ отправлен исполнителю.", parse_mode="HTML")
+
+    if assignee and assignee.telegram_id and assignee.telegram_id > 0:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Принять задачу в работу", callback_data=f"task_accept:{task_id}")],
+            [InlineKeyboardButton(text="❓ Задать ещё вопрос", callback_data=f"task_ask:{task_id}")],
+        ])
+        try:
+            await bot.send_message(
+                assignee.telegram_id,
+                f"💬 <b>Ответ председателя по задаче #{task_id}</b>\n\n"
+                f"<b>{task_title}</b>\n\n"
+                f"👤 <b>{chairman_name}</b> отвечает:\n"
+                f"<i>{escape(text)}</i>",
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+        except Exception:
+            pass
+
+
+# ── Task accept after Q&A ───────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("task_accept:"))
+async def cb_task_accept(callback: CallbackQuery):
+    task_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if not task:
+            await callback.answer("Задача не найдена", show_alert=True)
+            return
+
+        if task.status == "new":
+            task.status = "in_progress"
+            await session.commit()
+
+        assignee_name = ""
+        if task.assignee_id:
+            assignee = await session.get(Member, task.assignee_id)
+            assignee_name = assignee.name if assignee else ""
+
+        chairmen = (await session.execute(
+            select(Member).where(Member.is_chairman == True)
+        )).scalars().all()
+        task_title = escape(task.title)
+
+    await callback.message.answer(
+        f"✅ <b>Задача #{task_id} принята в работу!</b>\n\n"
+        f"<b>{task_title}</b>\n\n"
+        "Статус: 🔵 В работе",
+        parse_mode="HTML",
+        reply_markup=_task_keyboard(task_id, "in_progress", is_assignee=True),
+    )
+    await callback.answer("Задача принята!")
+
+    for ch in chairmen:
+        if ch.telegram_id and ch.telegram_id > 0:
+            try:
+                await callback.bot.send_message(
+                    ch.telegram_id,
+                    f"✅ <b>{escape(assignee_name)}</b> принял задачу в работу\n\n"
+                    f"<b>#{task_id}</b> {task_title}",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass

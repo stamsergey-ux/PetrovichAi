@@ -349,6 +349,7 @@ async def get_task_comments(task_id: int, user: str = Depends(get_current_user))
             {
                 "id": c.id,
                 "text": c.text,
+                "comment_type": c.comment_type or "comment",
                 "author": (m.name if m else None) or c.author_email or "Пользователь",
                 "created_at": c.created_at.isoformat(),
             }
