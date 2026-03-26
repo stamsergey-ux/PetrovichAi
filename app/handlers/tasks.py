@@ -1109,9 +1109,9 @@ async def cb_task_delete_confirm(callback: CallbackQuery, bot: Bot):
         title = task.title
         assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
 
-        # Delete comments first, then task
+        # Delete comments first, then task (raw SQL to avoid lazy-load issues)
         await session.execute(sa_delete(TaskComment).where(TaskComment.task_id == task_id))
-        await session.delete(task)
+        await session.execute(sa_delete(Task).where(Task.id == task_id))
         await session.commit()
 
     await callback.answer("🗑 Задача удалена")
