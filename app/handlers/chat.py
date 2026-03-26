@@ -499,64 +499,8 @@ async def _send_agenda(message: Message):
 
 
 async def _send_dashboard(message: Message):
-    async with async_session() as session:
-        all_tasks = (await session.execute(
-            select(Task).where(Task.is_verified == True)
-        )).scalars().all()
-        unverified_count = (await session.execute(
-            select(Task).where(Task.is_verified == False)
-        )).scalars().all()
-        result = await session.execute(
-            select(Task, Member)
-            .outerjoin(Member, Task.assignee_id == Member.id)
-            .where(Task.status.in_(["new", "in_progress", "overdue"]))
-            .where(Task.is_verified == True)
-        )
-        active_rows = result.all()
-
-    total = len(all_tasks)
-    new = sum(1 for t in all_tasks if t.status == "new")
-    in_progress = sum(1 for t in all_tasks if t.status == "in_progress")
-    done = sum(1 for t in all_tasks if t.status == "done")
-    pending_verify = len(unverified_count)
-
-    now = datetime.utcnow()
-    overdue = sum(
-        1 for t in all_tasks
-        if t.deadline and t.deadline < now and t.status not in ("done",)
-    )
-
-    bar = _progress_bar(done, total, 15)
-
-    text = f"📊 ДАШБОРД\n\n"
-    text += f"Прогресс: [{bar}] {done}/{total}\n\n"
-    text += f"⬜ Новые: {new}\n"
-    text += f"🔵 В работе: {in_progress}\n"
-    text += f"✅ Выполнено: {done}\n"
-    text += f"🔴 Просрочено: {overdue}\n"
-    if pending_verify and is_chairman(message.from_user.username):
-        text += f"\n⚠️ Ожидают верификации: {pending_verify}\n"
-
-    # Workload by person
-    if active_rows:
-        by_person: dict[str, int] = {}
-        for task, member in active_rows:
-            name = (member.display_name or member.first_name) if member else "—"
-            by_person[name] = by_person.get(name, 0) + 1
-
-        text += f"\n👥 Нагрузка по участникам:\n"
-        max_count = max(by_person.values()) if by_person else 1
-        for name, count in sorted(by_person.items(), key=lambda x: -x[1]):
-            mini_bar = _progress_bar(count, max_count, 8)
-            text += f"  {name}: [{mini_bar}] {count}\n"
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📋 Мои задачи", callback_data="my_tasks"),
-            InlineKeyboardButton(text="👥 Все задачи", callback_data="all_tasks"),
-        ]
-    ])
-    await message.answer(text, reply_markup=keyboard)
+    from app.handlers.tasks import _send_dashboard_to
+    await _send_dashboard_to(message)
 
 
 async def _show_last_protocol(message: Message):
