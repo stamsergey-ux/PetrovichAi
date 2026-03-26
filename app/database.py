@@ -286,7 +286,15 @@ async def init_db():
 
 
 async def _migrate_db():
-    """Add new columns to existing tables (safe, idempotent)."""
+    """Add new columns to existing tables (safe, idempotent).
+
+    For PostgreSQL: create_all handles everything, migrations are SQLite-only.
+    For SQLite: run ALTER TABLE commands to add columns to existing tables.
+    """
+    if "postgresql" in DATABASE_URL or "postgres" in DATABASE_URL:
+        # PostgreSQL: create_all already created all tables with all columns
+        return
+
     import aiosqlite
     db_path = DATABASE_URL.replace("sqlite+aiosqlite:///", "")
     if not db_path.startswith("/"):
@@ -315,30 +323,5 @@ async def _migrate_db():
                 except Exception:
                     pass  # column already exists
             await db.commit()
-
-        # Migrate task_comments: make author_id nullable, add author_email
-        try:
-            cols = await db.execute("PRAGMA table_info(task_comments)")
-            col_names = {row[1] for row in await cols.fetchall()}
-            if col_names and 'author_email' not in col_names:
-                await db.execute("""
-                    CREATE TABLE task_comments_new (
-                        id INTEGER PRIMARY KEY,
-                        task_id INTEGER NOT NULL REFERENCES tasks(id),
-                        author_id INTEGER REFERENCES members(id),
-                        author_email TEXT,
-                        text TEXT NOT NULL,
-                        created_at DATETIME
-                    )
-                """)
-                await db.execute("""
-                    INSERT INTO task_comments_new (id, task_id, author_id, text, created_at)
-                    SELECT id, task_id, author_id, text, created_at FROM task_comments
-                """)
-                await db.execute("DROP TABLE task_comments")
-                await db.execute("ALTER TABLE task_comments_new RENAME TO task_comments")
-                await db.commit()
-        except Exception:
-            pass
     except Exception:
         pass  # DB might not exist yet (first run)
