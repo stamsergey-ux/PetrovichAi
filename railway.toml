@@ -1,0 +1,4 @@
+[deploy]
+startCommand = "pip install asyncpg==0.30.0 -t /opt/venv/lib/python3.12/site-packages && python bot.py"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
