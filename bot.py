@@ -3,19 +3,6 @@
 import asyncio
 import logging
 import os
-import subprocess
-import sys
-
-# Ensure asyncpg is installed before any imports that need it
-try:
-    import asyncpg  # noqa: F401
-except ImportError:
-    print("Installing asyncpg...")
-    subprocess.check_call([
-        sys.executable, "-m", "pip", "install", "asyncpg==0.30.0",
-    ])
-    print("asyncpg installed, restarting...")
-    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from dotenv import load_dotenv
 load_dotenv()
