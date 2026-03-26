@@ -538,15 +538,16 @@ async def _show_last_protocol(message: Message):
 
 
 async def _show_all_tasks(message: Message):
-    """Show all open tasks (reply keyboard version)."""
-    from app.handlers.tasks import _task_buttons
+    """Show all open tasks — redirect to grouped view in tasks.py."""
+    from app.handlers.tasks import cb_all_tasks
 
+    # Create a fake callback-like flow: just show grouped by meeting
     async with async_session() as session:
+        from app.database import Meeting
         result = await session.execute(
-            select(Task, Member)
-            .outerjoin(Member, Task.assignee_id == Member.id)
+            select(Task, Meeting)
+            .outerjoin(Meeting, Task.meeting_id == Meeting.id)
             .where(Task.status.in_(["new", "in_progress", "overdue", "pending_done"]))
-            .order_by(Task.deadline.asc())
         )
         rows = result.all()
 
@@ -554,14 +555,50 @@ async def _show_all_tasks(message: Message):
         await message.answer("🎉 <b>Нет открытых задач!</b>", parse_mode="HTML")
         return
 
-    overdue_total = sum(1 for t, _ in rows if t.status == "overdue")
-    text = f"👥 <b>Все открытые задачи</b> — {len(rows)}"
+    # Group by meeting
+    groups: dict[int, list] = {}
+    for row in rows:
+        task, meeting = row[0], row[1]
+        mid = task.meeting_id or 0
+        if mid not in groups:
+            groups[mid] = [meeting, 0, 0]
+        groups[mid][1] += 1
+        if task.status == "overdue":
+            groups[mid][2] += 1
+
+    def sort_key(item):
+        mid, (meeting, *_) = item
+        if mid == 0:
+            return (0,)
+        return (1, -(meeting.date.timestamp() if meeting and meeting.date else 0))
+
+    sorted_groups = sorted(groups.items(), key=sort_key)
+
+    total = len(rows)
+    overdue_total = sum(1 for row in rows if row[0].status == "overdue")
+
+    text = f"👥 <b>Все открытые задачи — {total}</b>"
     if overdue_total:
         text += f"\n🚨 {overdue_total} просрочено"
+    text += "\n\nВыбери протокол:"
 
-    task_rows = _task_buttons(rows, show_assignee=True)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=task_rows) if task_rows else None
+    btn_rows = []
+    for mid, (meeting, cnt, ov) in sorted_groups:
+        if mid == 0:
+            label = "📌 Без протокола"
+        else:
+            date_str = meeting.date.strftime("%d.%m.%Y") if meeting and meeting.date else "—"
+            title = (meeting.title or "Совещание")[:30]
+            label = f"📋 {date_str} — {title}"
+        badge = f"  {cnt} зад."
+        if ov:
+            badge += f" 🚨{ov}"
+        btn_text = label + badge
+        if len(btn_text) > 60:
+            btn_text = btn_text[:59] + "…"
+        btn_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"tasks_by_meeting:{mid}")])
 
+    keyboard = InlineKeyboardMarkup(inline_keyboard=btn_rows)
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
