@@ -1,0 +1,5 @@
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+[phases.build]
+cmds = ["pip install asyncpg==0.30.0"]
