@@ -18,7 +18,7 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
 from app.database import init_db, seed_members_from_config
-from app.handlers import onboarding, protocol, tasks, voice, meetings, chat, stakeholder, task_verify, materials, chairman_tasks
+from app.handlers import onboarding, protocol, tasks, voice, meetings, chat, stakeholder, task_verify, materials, chairman_tasks, personal
 from app.middleware import AccessMiddleware
 from app.scheduler import run_scheduler
 
@@ -58,6 +58,7 @@ async def main():
     dp.include_router(stakeholder.router)  # FSM states must come before voice/chat
     dp.include_router(chairman_tasks.router)  # FSM states must come before voice/chat
     dp.include_router(task_verify.router)  # FSM states must come before chat
+    dp.include_router(personal.router)  # Personal tasks FSM before voice/chat
     dp.include_router(materials.router)
     dp.include_router(voice.router)
     dp.include_router(meetings.router)

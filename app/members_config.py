@@ -29,7 +29,7 @@ BOARD_MEMBERS = [
     {
         "display_name": "Виктория Михно",
         "username": "vikamikhno",
-        "is_chairman": False,
+        "is_chairman": True,
         "transcript_aliases": ["Виктория Михно", "Виктория М", "Виктория", "Вика", "Виктория М."],
     },
     {
@@ -75,16 +75,29 @@ BOARD_MEMBERS = [
         "transcript_aliases": ["Евгений Ильчук", "Евгений И", "Евгений", "Женя", "Евгений И."],
     },
     {
-        "display_name": "Дарья Ю",
-        "username": None,  # TBD
+        "display_name": "Дарья Юрасова",
+        "username": "DaryaYurasova",
         "is_chairman": False,
-        "transcript_aliases": ["Дарья Ю", "Дарья", "Дарья Ю."],
+        "transcript_aliases": ["Дарья Юрасова", "Дарья Ю", "Дарья", "Дарья Ю."],
     },
     {
-        "display_name": "Мария С",
-        "username": None,  # TBD
+        "display_name": "Сергей Косинский",
+        "username": "sergeykosinskiy",
         "is_chairman": False,
-        "transcript_aliases": ["Мария С", "Мария", "Мария С.", "Мария Смирнова"],
+        "is_stakeholder": True,
+        "transcript_aliases": ["Сергей Косинский", "Косинский", "Сергей К", "Сергей К."],
+    },
+    {
+        "display_name": "Давид Кочаров",
+        "username": "ProDavid",
+        "is_chairman": False,
+        "transcript_aliases": ["Давид Кочаров", "Давид К", "Давид", "Давид К."],
+    },
+    {
+        "display_name": "Мария Смирнова",
+        "username": "divo_divnoe_by_masha",
+        "is_chairman": False,
+        "transcript_aliases": ["Мария Смирнова", "Мария С", "Мария", "Мария С."],
     },
 ]
 

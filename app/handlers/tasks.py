@@ -37,6 +37,14 @@ class TaskAddComment(StatesGroup):
     waiting_text = State()       # any user typing/recording a free comment
 
 
+class TaskDiscussion(StatesGroup):
+    waiting_message = State()
+
+
+class TaskReply(StatesGroup):
+    waiting_reply = State()
+
+
 # Status icons including pending_done
 STATUS_ICON = {
     "new": "⬜",
@@ -704,53 +712,171 @@ async def cb_dashboard(callback: CallbackQuery):
 
 
 async def _send_dashboard_to(message):
-    async with async_session() as session:
-        all_tasks = (await session.execute(select(Task))).scalars().all()
-        result = await session.execute(
-            select(Task, Member)
-            .outerjoin(Member, Task.assignee_id == Member.id)
-            .where(Task.status.in_(["new", "in_progress", "overdue", "pending_done"]))
-        )
-        active_rows = result.all()
-
-    total = len(all_tasks)
-    new = sum(1 for t in all_tasks if t.status == "new")
-    in_progress = sum(1 for t in all_tasks if t.status == "in_progress")
-    done = sum(1 for t in all_tasks if t.status == "done")
-    pending = sum(1 for t in all_tasks if t.status == "pending_done")
+    from datetime import timedelta
+    from sqlalchemy import func as sa_func
+    from app.database import UserActivity, ScheduledMeeting, AgendaRequest
 
     now = datetime.utcnow()
-    overdue = sum(
-        1 for t in all_tasks
-        if t.deadline and t.deadline < now and t.status not in ("done", "pending_done")
-    )
+    week_ago = now - timedelta(days=7)
 
+    async with async_session() as session:
+        all_tasks = (await session.execute(select(Task))).scalars().all()
+        all_members = (await session.execute(
+            select(Member).where(Member.is_active == True)
+        )).scalars().all()
+
+        # Overdue tasks with assignee names
+        overdue_rows = (await session.execute(
+            select(Task, Member)
+            .outerjoin(Member, Task.assignee_id == Member.id)
+            .where(Task.status == "overdue")
+        )).all()
+
+        # Tasks with deadline this week
+        week_end = now + timedelta(days=7)
+        upcoming_rows = (await session.execute(
+            select(Task, Member)
+            .outerjoin(Member, Task.assignee_id == Member.id)
+            .where(
+                Task.status.in_(["new", "in_progress"]),
+                Task.deadline != None,
+                Task.deadline <= week_end,
+                Task.deadline > now,
+            )
+        )).all()
+
+        # All confirmed meetings
+        all_meetings = (await session.execute(
+            select(Meeting)
+            .where(Meeting.is_confirmed == True)
+            .order_by(Meeting.date.desc())
+        )).scalars().all()
+        last_meeting = all_meetings[0] if all_meetings else None
+
+        # Next scheduled meeting
+        next_meeting = (await session.execute(
+            select(ScheduledMeeting)
+            .where(ScheduledMeeting.is_completed == False)
+            .order_by(ScheduledMeeting.scheduled_date.asc())
+            .limit(1)
+        )).scalar_one_or_none()
+
+        # Agenda requests for next meeting
+        agenda_count = 0
+        if next_meeting:
+            agenda_count = (await session.execute(
+                select(sa_func.count(AgendaRequest.id))
+                .where(AgendaRequest.scheduled_meeting_id == next_meeting.id)
+                .where(AgendaRequest.is_included == False)
+            )).scalar() or 0
+
+        # User activity stats
+        activity_rows = (await session.execute(
+            select(
+                UserActivity.telegram_id,
+                sa_func.count(UserActivity.id).label("cnt"),
+            )
+            .where(UserActivity.created_at >= week_ago)
+            .group_by(UserActivity.telegram_id)
+        )).all()
+        activity_map = {row[0]: row[1] for row in activity_rows}
+
+    # ── Build text ──
+    total = len(all_tasks)
+    done = sum(1 for t in all_tasks if t.status == "done")
+    in_progress = sum(1 for t in all_tasks if t.status == "in_progress")
+    new_cnt = sum(1 for t in all_tasks if t.status == "new")
+    pending = sum(1 for t in all_tasks if t.status == "pending_done")
+    overdue_cnt = len(overdue_rows)
+    pct = round(done / total * 100) if total else 0
     bar = _progress_bar(done, total, 15)
-    text = "📊 <b>ДАШБОРД</b>\n\n"
-    text += f"Прогресс: [{bar}] {done}/{total}\n\n"
-    text += f"⬜ Новые: <b>{new}</b>\n"
-    text += f"🔵 В работе: <b>{in_progress}</b>\n"
-    text += f"🟡 Ожидают подтверждения: <b>{pending}</b>\n"
-    text += f"✅ Выполнено: <b>{done}</b>\n"
-    text += f"🔴 Просрочено: <b>{overdue}</b>\n"
 
-    if active_rows:
-        by_person: dict[str, int] = {}
-        for row in active_rows:
-            task, member = row[0], row[1]
-            name = (member.display_name or member.first_name) if member else "—"
-            by_person[name] = by_person.get(name, 0) + 1
-        text += "\n<b>Нагрузка по участникам:</b>\n"
-        max_count = max(by_person.values()) if by_person else 1
-        for name, count in sorted(by_person.items(), key=lambda x: -x[1]):
-            mini_bar = _progress_bar(count, max_count, 8)
-            text += f"  {escape(name)}: [{mini_bar}] {count}\n"
+    text = "📊 <b>СВОДКА</b>\n\n"
+
+    # ── Meetings ──
+    if last_meeting:
+        last_date = last_meeting.date.strftime("%d.%m.%Y")
+        last_tasks = sum(1 for t in all_tasks if t.meeting_id == last_meeting.id)
+        text += f"📅 Последнее совещание: <b>{last_date}</b>\n"
+        text += f"    {last_tasks} задач поставлено\n\n"
+
+    if next_meeting:
+        next_date = next_meeting.scheduled_date.strftime("%d.%m.%Y")
+        days_until = (next_meeting.scheduled_date - now).days
+        text += f"📅 Следующее совещание: <b>{next_date}</b> (через {days_until} дн.)\n"
+        if agenda_count:
+            text += f"    📌 {agenda_count} запросов в адженду\n"
+        text += "\n"
+
+    # ── Protocols ──
+    total_meetings = len(all_meetings)
+    if total_meetings:
+        tasks_from_meetings = sum(1 for t in all_tasks if t.meeting_id is not None)
+        done_from_meetings = sum(1 for t in all_tasks if t.meeting_id is not None and t.status == "done")
+        text += "━━━ <b>ПРОТОКОЛЫ</b> ━━━\n"
+        text += f"📝 Всего совещаний: <b>{total_meetings}</b>\n"
+        text += f"📋 Задач из протоколов: <b>{tasks_from_meetings}</b>"
+        if tasks_from_meetings:
+            pct_meetings = round(done_from_meetings / tasks_from_meetings * 100)
+            text += f" (✅ {done_from_meetings} выполнено — {pct_meetings}%)"
+        text += "\n\n"
+
+    # ── Tasks ──
+    text += "━━━ <b>ЗАДАЧИ</b> ━━━\n"
+    text += f"[{bar}] {done}/{total} ({pct}%)\n"
+    text += f"⬜ {new_cnt} новых · 🔵 {in_progress} в работе · 🟡 {pending} ждут подтв.\n"
+
+    if overdue_cnt:
+        text += f"\n🔴 <b>{overdue_cnt} просрочено:</b>\n"
+        overdue_by_person: dict[str, int] = {}
+        for task, member in overdue_rows:
+            name = (member.display_name or member.first_name or "?") if member else "?"
+            overdue_by_person[name] = overdue_by_person.get(name, 0) + 1
+        for name, cnt in sorted(overdue_by_person.items(), key=lambda x: -x[1]):
+            text += f"    🚨 {escape(name)} — {cnt}\n"
+
+    if upcoming_rows:
+        text += f"\n⏳ <b>{len(upcoming_rows)} задач на этой неделе</b>\n"
+
+    # ── Engagement ──
+    text += "\n━━━ <b>ВОВЛЕЧЁННОСТЬ</b> ━━━\n"
+    connected = sum(1 for m in all_members if m.telegram_id > 0)
+    not_connected = sum(1 for m in all_members if m.telegram_id <= 0)
+    active_users = sum(1 for m in all_members if m.telegram_id > 0 and activity_map.get(m.telegram_id, 0) > 0)
+
+    text += f"👥 {len(all_members)} участников · {connected} подключены · {not_connected} не заходили\n"
+    text += f"📈 Активны за неделю: <b>{active_users}</b>\n\n"
+
+    member_activity = []
+    for m in all_members:
+        if m.telegram_id <= 0:
+            member_activity.append((m, -1))
+        else:
+            member_activity.append((m, activity_map.get(m.telegram_id, 0)))
+    member_activity.sort(key=lambda x: -x[1])
+
+    for m, cnt in member_activity:
+        name = (m.display_name or m.first_name or m.username or "?")
+        if len(name) > 20:
+            name = name[:18] + "…"
+        if cnt < 0:
+            text += f"  ⚫ {escape(name)} — не подключён\n"
+        elif cnt == 0:
+            text += f"  ⚪ {escape(name)} — неактивен\n"
+        elif cnt <= 5:
+            text += f"  🟡 {escape(name)} — {cnt} действий\n"
+        else:
+            text += f"  🟢 {escape(name)} — {cnt} действий\n"
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="📋 Мои задачи", callback_data="my_tasks"),
+            InlineKeyboardButton(text="📌 Адженда", callback_data="adv_agenda"),
             InlineKeyboardButton(text="👥 Все задачи", callback_data="all_tasks"),
-        ]
+        ],
+        [
+            InlineKeyboardButton(text="🔴 Просроченные", callback_data="overdue_tasks"),
+            InlineKeyboardButton(text="📈 Гант (PDF)", callback_data="adv_gantt"),
+        ],
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
@@ -1722,3 +1848,134 @@ async def _submit_free_comment(task_id: int, author_tg_id: int, text: str, bot: 
                     await bot.send_message(ch.telegram_id, notif_text, parse_mode="HTML", reply_markup=view_kb)
                 except Exception:
                     pass
+
+
+# ── Overdue tasks filter ──────────────────────────────────────────────────────
+
+@router.callback_query(F.data == "overdue_tasks")
+async def cb_overdue_tasks(callback: CallbackQuery):
+    """Show only overdue tasks."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Task, Member)
+            .outerjoin(Member, Task.assignee_id == Member.id)
+            .where(Task.status == "overdue")
+            .order_by(Task.deadline.asc())
+        )
+        rows = result.all()
+
+    if not rows:
+        await callback.message.answer("🎉 <b>Нет просроченных задач!</b>", parse_mode="HTML")
+        await callback.answer()
+        return
+
+    text = f"🔴 <b>Просроченные задачи — {len(rows)}</b>"
+    task_rows = _task_buttons(rows, show_assignee=True)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=task_rows) if task_rows else None
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+    await callback.answer()
+
+
+# ── Task discussion (bidirectional comment notifications) ─────────────────────
+
+@router.callback_query(F.data.startswith("task_reply:"))
+async def cb_start_reply(callback: CallbackQuery, state: FSMContext):
+    """Quick reply to a task comment from notification."""
+    task_id = int(callback.data.split(":")[1])
+    await state.set_state(TaskReply.waiting_reply)
+    await state.update_data(task_id=task_id)
+    await callback.answer()
+    await callback.message.answer(
+        f"↩️ Ответ к задаче <b>#{task_id}</b> — напиши текстом или голосом:",
+        parse_mode="HTML",
+    )
+
+
+@router.message(TaskReply.waiting_reply, F.text)
+async def process_reply_text(message: Message, state: FSMContext, bot: Bot):
+    await _save_discussion_comment(message, state, bot, message.text)
+
+
+@router.message(TaskReply.waiting_reply, F.voice)
+async def process_reply_voice(message: Message, state: FSMContext, bot: Bot):
+    await message.answer("🎙 Распознаю...")
+    try:
+        from app.voice import transcribe_voice
+        file = await bot.download(message.voice)
+        text = await transcribe_voice(file.read(), ".ogg")
+        if not text:
+            await message.answer("⚠️ Не удалось распознать. Напиши текстом.")
+            return
+        await message.answer(f"📝 <i>{escape(text)}</i>", parse_mode="HTML")
+        await _save_discussion_comment(message, state, bot, text)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+
+async def _save_discussion_comment(message: Message, state: FSMContext, bot: Bot, text: str):
+    """Save comment and notify the other party (creator or assignee)."""
+    data = await state.get_data()
+    task_id = data["task_id"]
+    await state.clear()
+
+    async with async_session() as session:
+        author = (await session.execute(
+            select(Member).where(Member.telegram_id == message.from_user.id)
+        )).scalar_one_or_none()
+        if not author:
+            await message.answer("Нажми /start для регистрации.")
+            return
+
+        task = await session.get(Task, task_id)
+        if not task:
+            await message.answer("Задача не найдена.")
+            return
+
+        comment = TaskComment(
+            task_id=task_id,
+            author_id=author.id,
+            text=text,
+            created_at=datetime.utcnow(),
+        )
+        session.add(comment)
+        await session.commit()
+
+        assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
+        creator = await session.get(Member, task.created_by_id) if task.created_by_id else None
+        chairmen = (await session.execute(
+            select(Member).where(Member.is_chairman == True)
+        )).scalars().all()
+
+    await message.answer(
+        f"💬 Комментарий к задаче <b>#{task_id}</b> сохранён.",
+        parse_mode="HTML",
+    )
+
+    author_name = author.display_name or author.first_name or "Участник"
+    reply_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="↩️ Ответить", callback_data=f"task_reply:{task_id}")],
+        [InlineKeyboardButton(text="📋 Открыть задачу", callback_data=f"task_detail:{task_id}")],
+    ])
+
+    notification = (
+        f"💬 <b>Новый комментарий к задаче #{task_id}</b>\n\n"
+        f"📋 {escape(task.title)}\n"
+        f"👤 {escape(author_name)}:\n"
+        f"<i>{escape(text[:500])}</i>"
+    )
+
+    recipients: set[int] = set()
+    if assignee and assignee.telegram_id > 0 and assignee.telegram_id != message.from_user.id:
+        recipients.add(assignee.telegram_id)
+    if creator and creator.telegram_id > 0 and creator.telegram_id != message.from_user.id:
+        recipients.add(creator.telegram_id)
+    if assignee and assignee.telegram_id == message.from_user.id:
+        for ch in chairmen:
+            if ch.telegram_id > 0 and ch.telegram_id != message.from_user.id:
+                recipients.add(ch.telegram_id)
+
+    for tg_id in recipients:
+        try:
+            await bot.send_message(tg_id, notification, parse_mode="HTML", reply_markup=reply_kb)
+        except Exception:
+            pass

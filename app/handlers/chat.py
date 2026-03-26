@@ -224,31 +224,44 @@ def _generate_agenda_pdf(agenda_text: str) -> io.BytesIO:
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
     import os
+    import matplotlib
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4,
                             leftMargin=2*cm, rightMargin=2*cm,
                             topMargin=2*cm, bottomMargin=2*cm)
 
-    # Try to register a font that supports Cyrillic
+    # Use DejaVuSans bundled with matplotlib — guaranteed Cyrillic support
     font_name = "Helvetica"
-    for font_path in [
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
+    font_candidates = [
+        os.path.join(matplotlib.get_data_path(), "fonts", "ttf", "DejaVuSans.ttf"),
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ]:
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    ]
+    for font_path in font_candidates:
         if os.path.exists(font_path):
             try:
-                pdfmetrics.registerFont(TTFont("CyrFont", font_path))
-                font_name = "CyrFont"
+                pdfmetrics.registerFont(TTFont("DejaVu", font_path))
+                font_name = "DejaVu"
                 break
             except Exception:
                 continue
 
+    # Also register bold variant for headings
+    bold_font = font_name
+    if font_name == "DejaVu":
+        bold_path = os.path.join(matplotlib.get_data_path(), "fonts", "ttf", "DejaVuSans-Bold.ttf")
+        if os.path.exists(bold_path):
+            try:
+                pdfmetrics.registerFont(TTFont("DejaVuBold", bold_path))
+                bold_font = "DejaVuBold"
+            except Exception:
+                pass
+
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         'AgendaTitle', parent=styles['Title'],
-        fontName=font_name, fontSize=16, spaceAfter=12,
+        fontName=bold_font, fontSize=16, spaceAfter=12,
     )
     body_style = ParagraphStyle(
         'AgendaBody', parent=styles['Normal'],
@@ -338,7 +351,7 @@ async def _dispatch_text(message: Message, raw_text: str, state: FSMContext | No
     if text in ("протокол", "последний протокол", "📝 протокол"):
         return await _show_last_protocol(message)
 
-    if text in ("гант", "ганта", "гант-таблица", "экспорт задач", "диаграмма ганта"):
+    if text in ("гант", "ганта", "гант-таблица", "экспорт задач", "диаграмма ганта", "📊 гант"):
         return await _send_gantt(message)
 
     if text in ("адженда", "повестка", "подготовь адженду", "подготовь повестку"):
@@ -378,6 +391,15 @@ async def _dispatch_text(message: Message, raw_text: str, state: FSMContext | No
     if text in ("📎 материалы", "материалы", "материалы совещаний", "презентации"):
         from app.handlers.materials import show_materials
         return await show_materials(message)
+
+    if text in ("📋 мои заметки", "мои заметки", "мои напоминалки", "заметки"):
+        from app.handlers.personal import show_personal_tasks
+        return await show_personal_tasks(message)
+
+    if text.startswith(("напомни ", "запиши ", "заметка ")):
+        # Quick capture: skip FSM, save directly
+        from app.handlers.personal import _save_personal_task_direct
+        return await _save_personal_task_direct(message, raw_text)
 
     # For everything else — AI chat with RAG
     await _ai_chat(message, override_text=raw_text, state=state)
@@ -625,9 +647,17 @@ async def _show_advanced_menu(message: Message):
     """Show advanced admin menu with inline buttons grouped by section."""
     from app.utils import is_stakeholder
     if is_stakeholder(message.from_user.username):
-        from app.handlers.onboarding import MEMBER_INTRO
-        name = message.from_user.first_name or message.from_user.username or "коллега"
-        await message.answer(MEMBER_INTRO.format(name=name), parse_mode="HTML")
+        # Stakeholder gets a focused menu
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💎 Поставить задачу", callback_data="stk_start_task")],
+            [InlineKeyboardButton(text="💎 Мои поручения", callback_data="stk_my_tasks")],
+            [InlineKeyboardButton(text="📝 Протоколы", callback_data="last_protocol")],
+        ])
+        await message.answer(
+            "💎 <b>Меню акционера</b>\n\nВыбери действие:",
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
         return
     if not is_chairman(message.from_user.username):
         await message.answer("⛔ Управление доступно администраторам.")

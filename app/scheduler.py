@@ -147,9 +147,46 @@ async def weekly_digest(bot: Bot, group_chat_id: int | None = None):
             pass
 
 
+async def ensure_weekly_meeting():
+    """Auto-create next Wednesday 17:00 meeting if none exists.
+
+    Meetings are held every Wednesday at 17:00 Moscow time.
+    This ensures there's always a next meeting scheduled.
+    """
+    now = datetime.utcnow()
+    # Find next Wednesday (weekday 2)
+    days_ahead = (2 - now.weekday()) % 7
+    if days_ahead == 0 and now.hour >= 17:
+        days_ahead = 7  # already past this Wednesday
+    next_wednesday = (now + timedelta(days=days_ahead)).replace(
+        hour=14, minute=0, second=0, microsecond=0  # 17:00 MSK = 14:00 UTC
+    )
+
+    async with async_session() as session:
+        # Check if meeting already exists for that date
+        existing = (await session.execute(
+            select(ScheduledMeeting).where(
+                ScheduledMeeting.scheduled_date == next_wednesday,
+                ScheduledMeeting.is_completed == False,
+            )
+        )).scalar_one_or_none()
+
+        if not existing:
+            meeting = ScheduledMeeting(
+                scheduled_date=next_wednesday,
+                title="Совещание СД",
+            )
+            session.add(meeting)
+            await session.commit()
+            print(f"Auto-created Wednesday meeting: {next_wednesday}")
+
+
 async def check_upcoming_meetings(bot: Bot):
     """Check for meetings happening in the next 24-48h and trigger pre-meeting actions."""
     from app.handlers.meetings import send_status_requests, generate_and_send_agenda
+
+    # Ensure next Wednesday meeting always exists
+    await ensure_weekly_meeting()
 
     now = datetime.utcnow()
     in_48h = now + timedelta(hours=48)
@@ -193,6 +230,9 @@ async def run_scheduler(bot: Bot):
         try:
             await check_deadlines(bot)
             await check_upcoming_meetings(bot)
+            # Personal task reminders
+            from app.handlers.personal import check_personal_reminders
+            await check_personal_reminders(bot)
         except Exception as e:
             print(f"Scheduler error: {e}")
         await asyncio.sleep(3600)  # Check every hour

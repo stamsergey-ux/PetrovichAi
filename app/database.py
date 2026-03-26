@@ -128,6 +128,7 @@ class AgendaRequest(Base):
     member_id = Column(Integer, ForeignKey("members.id"), nullable=False)
     topic = Column(Text, nullable=False)
     reason = Column(Text, nullable=True)
+    duration_minutes = Column(Integer, nullable=True)  # requested time in minutes
     scheduled_meeting_id = Column(Integer, ForeignKey("scheduled_meetings.id"), nullable=True)
     is_included = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -173,6 +174,31 @@ class MeetingMaterial(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class UserActivity(Base):
+    """Tracks user interactions with the bot for engagement analytics."""
+    __tablename__ = "user_activity"
+
+    id = Column(Integer, primary_key=True)
+    telegram_id = Column(Integer, nullable=False, index=True)
+    action_type = Column(String(30), nullable=False)  # message, callback, voice
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PersonalTask(Base):
+    """Personal reminders / micro-tasks for individual board members."""
+    __tablename__ = "personal_tasks"
+
+    id = Column(Integer, primary_key=True)
+    owner_id = Column(Integer, ForeignKey("members.id"), nullable=False)
+    title = Column(String(500), nullable=False)
+    remind_at = Column(DateTime, nullable=True)  # when to send reminder
+    is_done = Column(Boolean, default=False)
+    reminded = Column(Boolean, default=False)  # reminder already sent
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    owner = relationship("Member", foreign_keys=[owner_id])
+
+
 class MeetingEmbedding(Base):
     """Stores text chunks and their embeddings for RAG search."""
     __tablename__ = "meeting_embeddings"
@@ -214,9 +240,13 @@ async def seed_members_from_config():
                 existing = result.scalar_one_or_none()
 
             if existing:
-                # Update display_name if it changed in config
+                # Update fields if changed in config
                 if existing.display_name != display_name:
                     existing.display_name = display_name
+                if cfg.get("is_chairman") and not existing.is_chairman:
+                    existing.is_chairman = True
+                if cfg.get("is_stakeholder") and not existing.is_stakeholder:
+                    existing.is_stakeholder = True
                 continue
 
             # Create placeholder record — negative id won't collide with real Telegram IDs
@@ -235,6 +265,7 @@ async def seed_members_from_config():
                 username=username,
                 display_name=display_name,
                 is_chairman=cfg.get("is_chairman", False),
+                is_stakeholder=cfg.get("is_stakeholder", False),
                 is_active=True,
             )
             session.add(member)
@@ -273,6 +304,11 @@ async def _migrate_db():
                 "ALTER TABLE tasks ADD COLUMN last_notified_at DATETIME",
                 "ALTER TABLE task_comments ADD COLUMN comment_type VARCHAR(20) DEFAULT 'comment'",
                 "CREATE TABLE IF NOT EXISTS meeting_materials (id INTEGER PRIMARY KEY, uploader_id INTEGER REFERENCES members(id), meeting_id INTEGER REFERENCES meetings(id), file_id VARCHAR(500) NOT NULL, file_name VARCHAR(500), file_type VARCHAR(20), description TEXT, created_at DATETIME)",
+                "ALTER TABLE agenda_requests ADD COLUMN duration_minutes INTEGER",
+                "CREATE TABLE IF NOT EXISTS personal_tasks (id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES members(id), title VARCHAR(500) NOT NULL, remind_at DATETIME, is_done BOOLEAN DEFAULT FALSE, reminded BOOLEAN DEFAULT FALSE, created_at DATETIME)",
+                "CREATE TABLE IF NOT EXISTS user_activity (id INTEGER PRIMARY KEY, telegram_id INTEGER NOT NULL, action_type VARCHAR(30) NOT NULL, created_at DATETIME)",
+                "CREATE INDEX IF NOT EXISTS idx_user_activity_tg ON user_activity(telegram_id)",
+                "CREATE INDEX IF NOT EXISTS idx_user_activity_date ON user_activity(created_at)",
             ]:
                 try:
                     await db.execute(sql)

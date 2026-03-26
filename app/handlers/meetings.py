@@ -92,13 +92,36 @@ async def schedule_meeting(message: Message):
 
 @router.message(F.text.lower().startswith("добавь в адженду"))
 async def add_agenda_item(message: Message):
-    """Any member can request an agenda item. Format: 'добавь в адженду: тема'"""
+    """Any member can request an agenda item.
+    Formats:
+      'добавь в адженду: тема, 15 мин'
+      'добавь в адженду: тема'
+    """
+    import re
     text = message.text
     # Extract topic after "добавь в адженду" (with or without colon)
-    topic = text.split(":", 1)[1].strip() if ":" in text else text[len("добавь в адженду"):].strip()
+    raw = text.split(":", 1)[1].strip() if ":" in text else text[len("добавь в адженду"):].strip()
+
+    if not raw or len(raw) < 3:
+        await message.answer(
+            "📌 Укажи тему и время:\n"
+            "<code>добавь в адженду: обсудить бюджет Q2, 15 мин</code>\n\n"
+            "Время можно не указывать — по умолчанию 10 мин.",
+            parse_mode="HTML",
+        )
+        return
+
+    # Parse duration: "15 мин", "20мин", "5 минут" at the end
+    duration_minutes = None
+    duration_match = re.search(r',?\s*(\d+)\s*мин(?:ут)?\.?\s*$', raw, re.IGNORECASE)
+    if duration_match:
+        duration_minutes = int(duration_match.group(1))
+        topic = raw[:duration_match.start()].strip().rstrip(",").strip()
+    else:
+        topic = raw.strip()
 
     if not topic or len(topic) < 3:
-        await message.answer("📌 Укажи тему: <code>добавь в адженду: обсудить бюджет Q2</code>", parse_mode="HTML")
+        await message.answer("📌 Укажи тему: <code>добавь в адженду: обсудить бюджет Q2, 15 мин</code>", parse_mode="HTML")
         return
 
     async with async_session() as session:
@@ -121,6 +144,7 @@ async def add_agenda_item(message: Message):
         request = AgendaRequest(
             member_id=member.id,
             topic=topic,
+            duration_minutes=duration_minutes,
             scheduled_meeting_id=next_meeting.id if next_meeting else None,
         )
         session.add(request)
@@ -128,10 +152,11 @@ async def add_agenda_item(message: Message):
 
     name = member.display_name or member.first_name or "Участник"
     meeting_info = f" (совещание {next_meeting.scheduled_date.strftime('%d.%m.%Y')})" if next_meeting else ""
+    dur_info = f"\n⏱ Время: {duration_minutes} мин." if duration_minutes else "\n⏱ Время: 10 мин. (по умолчанию)"
     await message.answer(
         f"📌 Пункт добавлен в адженду{escape(meeting_info)}!\n\n"
         f"👤 {escape(name)}\n"
-        f"📋 {escape(topic)}",
+        f"📋 {escape(topic)}{dur_info}",
         parse_mode="HTML",
     )
 
@@ -283,12 +308,13 @@ async def generate_and_send_agenda(bot: Bot, scheduled_meeting_id: int):
         f"#{t.id} {t.title} -> {m.name if m else '?'}, deadline: {t.deadline}" for t, m in overdue_tasks
     ) or "None"
 
-    # Add member requests to agenda context
+    # Add member requests to agenda context (with requested time)
     if agenda_requests:
         prev_agenda_items += "\nЗАПРОСЫ ОТ УЧАСТНИКОВ:\n"
         for req, member in agenda_requests:
             name = member.display_name or member.first_name or "?"
-            prev_agenda_items += f"- {name}: {req.topic}\n"
+            dur = f" ({req.duration_minutes} мин.)" if req.duration_minutes else " (10 мин.)"
+            prev_agenda_items += f"- {name}: {req.topic}{dur}\n"
 
     # Add status reports context
     if status_reports:

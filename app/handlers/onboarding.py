@@ -91,31 +91,18 @@ STAKEHOLDER_INTRO = """💎 <b>AI-секретарь — Акционер</b>
 
 💎 <b>Поставить задачу</b>
 Нажми кнопку и опиши голосом или текстом:
-что нужно сделать, кто ответственный, срок.
-Покажу карточку — подтвердишь перед созданием.
-Ответственный и руководство получат уведомление.
+что сделать, кто ответственный, срок.
+Исполнитель и руководство получат уведомление.
 
 💎 <b>Мои поручения</b>
-Все поставленные тобой задачи и их текущий статус.
+Все поставленные тобой задачи, статус, просрочки.
+Когда исполнитель задаёт уточняющий вопрос — ты получишь уведомление и сможешь ответить.
 
-📋 <b>Протоколы и задачи</b>
-· Все протоколы совещаний доступны
-· «Что решили на последнем совещании?»
-· «Какой статус у задачи по аудиту?»
-
-📎 <b>Материалы совещаний</b>
-· Отправь PDF или PPTX — сохраню в архив совещания
-· «Материалы» — все загруженные файлы
+📋 <b>Протоколы и повестки</b>
+Протоколы совещаний и повестки встреч.
 
 🎙 <b>Голосовые сообщения</b>
-Отправь войс — распознаю и выполню команду.
-
-⚙️ <b>Расширенные функции</b>
-Кнопка открывает полный список: задачи, дашборд,
-протоколы, материалы совещаний и другие.
-
-💬 <b>Свободный чат</b>
-Пиши любые вопросы — отвечу на основе данных Совета."""
+Отправь войс — распознаю и выполню команду."""
 
 
 
@@ -143,11 +130,13 @@ def _persistent_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
         buttons = [
             [KeyboardButton(text="📋 Мои задачи"), KeyboardButton(text="📝 Поставить задачу")],
             [KeyboardButton(text="👥 Все задачи"), KeyboardButton(text="📊 Дашборд")],
+            [KeyboardButton(text="📝 Записать задачу"), KeyboardButton(text="📋 Мои заметки")],
             [KeyboardButton(text="⚙️ Управление")],
         ]
     else:
         buttons = [
             [KeyboardButton(text="📋 Мои задачи"), KeyboardButton(text="📝 Протокол")],
+            [KeyboardButton(text="📝 Записать задачу"), KeyboardButton(text="📋 Мои заметки")],
             [KeyboardButton(text="❓ Помощь")],
         ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -156,10 +145,10 @@ def _persistent_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
 
 
 def _stakeholder_keyboard() -> ReplyKeyboardMarkup:
-    """Persistent keyboard for stakeholder/shareholder."""
+    """Focused persistent keyboard for stakeholder — task assignment & control."""
     buttons = [
         [KeyboardButton(text="💎 Поставить задачу"), KeyboardButton(text="💎 Мои поручения")],
-        [KeyboardButton(text="📋 Мои задачи"), KeyboardButton(text="📝 Протокол")],
+        [KeyboardButton(text="📝 Протокол")],
         [KeyboardButton(text="❓ Помощь")],
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)

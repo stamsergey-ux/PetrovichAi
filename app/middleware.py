@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
@@ -11,6 +12,21 @@ from aiogram.types import TelegramObject, Update
 from app.members_config import BOARD_MEMBERS
 
 logger = logging.getLogger(__name__)
+
+
+async def _log_activity(telegram_id: int, action_type: str):
+    """Log a user interaction for engagement tracking."""
+    try:
+        from app.database import async_session, UserActivity
+        async with async_session() as session:
+            session.add(UserActivity(
+                telegram_id=telegram_id,
+                action_type=action_type,
+                created_at=datetime.utcnow(),
+            ))
+            await session.commit()
+    except Exception:
+        pass  # never break the bot over analytics
 
 # Build whitelist from members_config + env vars (all lowercase)
 _ALLOWED: set[str] = set()
@@ -71,5 +87,17 @@ class AccessMiddleware(BaseMiddleware):
                 user.username,
             )
             return  # Silent drop — no response to unauthorized user
+
+        # Track user activity
+        if isinstance(event, Update):
+            if event.message and event.message.voice:
+                action = "voice"
+            elif event.message:
+                action = "message"
+            elif event.callback_query:
+                action = "callback"
+            else:
+                action = "other"
+            await _log_activity(user.id, action)
 
         return await handler(event, data)

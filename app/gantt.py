@@ -2,15 +2,25 @@
 from __future__ import annotations
 
 import io
+import os
 from datetime import datetime, timedelta
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.font_manager as fm
 from matplotlib.patches import FancyBboxPatch
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfgen import canvas as pdf_canvas
+
+# Use DejaVuSans (bundled with matplotlib) for Cyrillic support
+_dejavu = os.path.join(matplotlib.get_data_path(), "fonts", "ttf", "DejaVuSans.ttf")
+if os.path.exists(_dejavu):
+    _cyr_font = fm.FontProperties(fname=_dejavu)
+    matplotlib.rcParams["font.family"] = _cyr_font.get_name()
+else:
+    _cyr_font = None
 
 
 def generate_gantt_pdf(tasks: list[dict]) -> io.BytesIO:
