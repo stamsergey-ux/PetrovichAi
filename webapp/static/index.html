@@ -400,17 +400,35 @@ function DashboardPage({ setPage, goTasks }) {
   useEffect(() => { api('/api/dashboard').then(setData).finally(() => setLoading(false)); }, []);
   if (loading) return <Spinner/>;
   if (!data) return null;
-  const { stats, recent_tasks, recent_meetings } = data;
+  const { stats, recent_tasks, last_meeting, next_meeting, overdue_by_person, engagement } = data;
   const pct = stats.total_tasks ? Math.round(stats.done_tasks/stats.total_tasks*100) : 0;
+  const meetPct = stats.tasks_from_meetings ? Math.round(stats.done_from_meetings/stats.tasks_from_meetings*100) : 0;
   const cards = [
     { label:'Всего задач',  value:stats.total_tasks,        sub:`${stats.total_meetings} совещаний`, accent:'#4f46e5', num:'#4f46e5', filter:'all' },
     { label:'В работе',     value:stats.in_progress_tasks,  sub:'активных',               accent:'#3b82f6', num:'#1d4ed8', filter:'in_progress' },
     { label:'Выполнено',    value:stats.done_tasks,          sub:`${pct}% от плана`,       accent:'#10b981', num:'#059669', filter:'done' },
     { label:'Просрочено',   value:stats.overdue_tasks,       sub:'требуют внимания',       accent:'#ef4444', num:'#dc2626', filter:'overdue' },
   ];
+  const engIcon = s => s==='active'?'🟢':s==='low'?'🟡':s==='inactive'?'⚪':'⚫';
+  const engLabel = s => s==='active'?'активен':s==='low'?'мало активен':s==='inactive'?'неактивен':'не подключён';
   return (
     <div className="page fade-up" style={{ display:'flex', flexDirection:'column', gap:22 }}>
-      <div><div className="page-title">Дашборд</div><div className="page-sub">Общая картина по задачам и совещаниям</div></div>
+      <div><div className="page-title">Сводка</div><div className="page-sub">Протоколы, задачи, вовлечённость команды</div></div>
+
+      {/* Meeting info bar */}
+      <div style={{ display:'flex', gap:12, flexWrap:'wrap' }}>
+        {last_meeting && <div className="card" style={{ flex:1, minWidth:200, padding:'14px 18px' }}>
+          <div style={{ fontSize:11, color:'#9ca3af', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.05em' }}>Последнее совещание</div>
+          <div style={{ fontSize:15, fontWeight:700, color:'#111827', marginTop:4 }}>{fmt(last_meeting.date)}</div>
+          <div style={{ fontSize:12, color:'#6b7280', marginTop:2 }}>{last_meeting.title} · {last_meeting.tasks_count} задач</div>
+        </div>}
+        {next_meeting && <div className="card" style={{ flex:1, minWidth:200, padding:'14px 18px' }}>
+          <div style={{ fontSize:11, color:'#9ca3af', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.05em' }}>Следующее совещание</div>
+          <div style={{ fontSize:15, fontWeight:700, color:'#111827', marginTop:4 }}>{fmt(next_meeting.date)}</div>
+          <div style={{ fontSize:12, color:'#6b7280', marginTop:2 }}>{next_meeting.title}{next_meeting.agenda_requests?' · '+next_meeting.agenda_requests+' запросов в адженду':''}</div>
+        </div>}
+      </div>
+
       <div className="stat-grid">
         {cards.map(c => (
           <div key={c.label} className="stat-card" onClick={()=>goTasks(c.filter)} style={{cursor:'pointer'}}>
@@ -421,6 +439,8 @@ function DashboardPage({ setPage, goTasks }) {
           </div>
         ))}
       </div>
+
+      {/* Progress bar */}
       <div className="card">
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
           <span style={{ fontSize:13, fontWeight:600, color:'#374151' }}>Прогресс выполнения задач</span>
@@ -431,36 +451,56 @@ function DashboardPage({ setPage, goTasks }) {
           <span>{stats.done_tasks} выполнено</span><span>{stats.total_tasks-stats.done_tasks} осталось</span>
         </div>
       </div>
+
+      {/* Protocols + Tasks from meetings */}
+      {stats.total_meetings > 0 && <div className="card" style={{ padding:'16px 20px' }}>
+        <div style={{ fontSize:13, fontWeight:600, color:'#374151', marginBottom:8 }}>Протоколы</div>
+        <div style={{ display:'flex', gap:24, fontSize:13, color:'#6b7280' }}>
+          <span>📝 <b>{stats.total_meetings}</b> совещаний</span>
+          <span>📋 <b>{stats.tasks_from_meetings}</b> задач из протоколов</span>
+          <span>✅ <b>{stats.done_from_meetings}</b> выполнено ({meetPct}%)</span>
+          {stats.upcoming_this_week > 0 && <span>⏳ <b>{stats.upcoming_this_week}</b> дедлайнов на неделе</span>}
+        </div>
+      </div>}
+
       <div className="dash-2col" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+        {/* Overdue by person */}
         <div className="card">
-          <div className="card-hd">Последние задачи <button className="btn btn-ghost" onClick={()=>setPage('tasks')}>Все →</button></div>
-          {recent_tasks.length===0 && <div style={{ fontSize:13, color:'#9ca3af', textAlign:'center', padding:'12px 0' }}>Задач пока нет</div>}
-          {recent_tasks.map(t => (
-            <div key={t.id} style={{ display:'flex', gap:10, alignItems:'flex-start', padding:'8px 0', borderBottom:'1px solid #f9fafb' }}>
-              <SDot s={t.status}/>
-              <div style={{ flex:1, minWidth:0 }}>
-                <div className="truncate" style={{ fontSize:13, color:'#111827', fontWeight:500 }}>{t.title}</div>
-                <div style={{ fontSize:11, color:'#9ca3af', marginTop:2 }}>{t.assignee||'—'} · до {fmt(t.deadline)}</div>
-              </div>
+          <div className="card-hd">Просрочки по людям <button className="btn btn-ghost" onClick={()=>goTasks('overdue')}>Все →</button></div>
+          {(!overdue_by_person||overdue_by_person.length===0) && <div style={{ fontSize:13, color:'#10b981', textAlign:'center', padding:'12px 0' }}>🎉 Нет просрочек</div>}
+          {overdue_by_person && overdue_by_person.map(p => (
+            <div key={p.name} style={{ display:'flex', justifyContent:'space-between', padding:'6px 0', borderBottom:'1px solid #f9fafb', fontSize:13 }}>
+              <span style={{ color:'#374151' }}>{p.name}</span>
+              <span style={{ color:'#ef4444', fontWeight:600 }}>{p.count}</span>
             </div>
           ))}
         </div>
+
+        {/* Engagement */}
         <div className="card">
-          <div className="card-hd">Последние совещания <button className="btn btn-ghost" onClick={()=>setPage('meetings')}>Все →</button></div>
-          {recent_meetings.length===0 && <div style={{ fontSize:13, color:'#9ca3af', textAlign:'center', padding:'12px 0' }}>Протоколов пока нет</div>}
-          {recent_meetings.map(m => (
-            <div key={m.id} style={{ display:'flex', gap:12, alignItems:'center', padding:'7px 0', borderBottom:'1px solid #f9fafb' }}>
-              <div className="date-badge">
-                <div className="date-day">{new Date(m.date).getDate()}</div>
-                <div className="date-mon">{new Date(m.date).toLocaleDateString('ru-RU',{month:'short'})}</div>
-              </div>
-              <div>
-                <div style={{ fontSize:13, fontWeight:500, color:'#111827' }}>{m.title||'Совещание'}</div>
-                <div style={{ fontSize:11, color:'#9ca3af', marginTop:1 }}>{fmt(m.date)}</div>
-              </div>
+          <div className="card-hd">Вовлечённость (7 дней)</div>
+          {engagement && engagement.map(e => (
+            <div key={e.name} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'5px 0', borderBottom:'1px solid #f9fafb', fontSize:13 }}>
+              <span style={{ color:'#374151' }}>{engIcon(e.status)} {e.name}</span>
+              <span style={{ color:'#9ca3af', fontSize:11 }}>{e.status==='not_connected'?'не подключён':e.actions+' действий'}</span>
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Recent tasks */}
+      <div className="card">
+        <div className="card-hd">Последние задачи <button className="btn btn-ghost" onClick={()=>setPage('tasks')}>Все →</button></div>
+        {recent_tasks.length===0 && <div style={{ fontSize:13, color:'#9ca3af', textAlign:'center', padding:'12px 0' }}>Задач пока нет</div>}
+        {recent_tasks.map(t => (
+          <div key={t.id} style={{ display:'flex', gap:10, alignItems:'flex-start', padding:'8px 0', borderBottom:'1px solid #f9fafb' }}>
+            <SDot s={t.status}/>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div className="truncate" style={{ fontSize:13, color:'#111827', fontWeight:500 }}>{t.title}</div>
+              <div style={{ fontSize:11, color:'#9ca3af', marginTop:2 }}>{t.assignee||'—'} · до {fmt(t.deadline)}</div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

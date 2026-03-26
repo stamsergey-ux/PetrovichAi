@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.database import (
     async_session, init_db,
-    Member, Meeting, Task, TaskComment, ScheduledMeeting, AgendaRequest,
+    Member, Meeting, Task, TaskComment, ScheduledMeeting, AgendaRequest, UserActivity,
 )
 from webapp.auth import verify_credentials, get_current_user, is_chairman_email
 
@@ -139,26 +139,97 @@ async def get_me(user: str = Depends(get_current_user)):
 
 @app.get("/api/dashboard")
 async def dashboard(user: str = Depends(get_current_user)):
+    from datetime import timedelta
+    now = datetime.utcnow()
+    week_ago = now - timedelta(days=7)
+
     async with async_session() as session:
-        total_tasks = (await session.execute(
-            select(func.count(Task.id))
-        )).scalar()
+        all_tasks = (await session.execute(select(Task))).scalars().all()
 
-        done_tasks = (await session.execute(
-            select(func.count(Task.id)).where(Task.status == "done")
-        )).scalar()
+        total_tasks = len(all_tasks)
+        done_tasks = sum(1 for t in all_tasks if t.status == "done")
+        overdue_tasks = sum(1 for t in all_tasks if t.status == "overdue")
+        in_progress_tasks = sum(1 for t in all_tasks if t.status == "in_progress")
+        new_tasks = sum(1 for t in all_tasks if t.status == "new")
+        pending_tasks = sum(1 for t in all_tasks if t.status == "pending_done")
 
-        overdue_tasks = (await session.execute(
-            select(func.count(Task.id)).where(Task.status == "overdue")
-        )).scalar()
+        # Protocol stats
+        all_meetings = (await session.execute(
+            select(Meeting).where(Meeting.is_confirmed == True).order_by(Meeting.date.desc())
+        )).scalars().all()
+        total_meetings = len(all_meetings)
+        last_meeting = all_meetings[0] if all_meetings else None
+        tasks_from_meetings = sum(1 for t in all_tasks if t.meeting_id is not None)
+        done_from_meetings = sum(1 for t in all_tasks if t.meeting_id is not None and t.status == "done")
 
-        in_progress_tasks = (await session.execute(
-            select(func.count(Task.id)).where(Task.status == "in_progress")
-        )).scalar()
+        # Next scheduled meeting
+        next_meeting = (await session.execute(
+            select(ScheduledMeeting)
+            .where(ScheduledMeeting.is_completed == False)
+            .order_by(ScheduledMeeting.scheduled_date.asc())
+            .limit(1)
+        )).scalar_one_or_none()
 
-        total_meetings = (await session.execute(
-            select(func.count(Meeting.id))
-        )).scalar()
+        agenda_count = 0
+        if next_meeting:
+            agenda_count = (await session.execute(
+                select(func.count(AgendaRequest.id))
+                .where(AgendaRequest.scheduled_meeting_id == next_meeting.id)
+                .where(AgendaRequest.is_included == False)
+            )).scalar() or 0
+
+        # Overdue by person
+        overdue_rows = (await session.execute(
+            select(Task, Member)
+            .outerjoin(Member, Task.assignee_id == Member.id)
+            .where(Task.status == "overdue")
+        )).all()
+        overdue_by_person = {}
+        for t, m in overdue_rows:
+            name = (m.display_name or m.first_name or "?") if m else "?"
+            overdue_by_person[name] = overdue_by_person.get(name, 0) + 1
+
+        # Tasks due this week
+        week_end = now + timedelta(days=7)
+        upcoming_count = (await session.execute(
+            select(func.count(Task.id)).where(
+                Task.status.in_(["new", "in_progress"]),
+                Task.deadline != None,
+                Task.deadline <= week_end,
+                Task.deadline > now,
+            )
+        )).scalar() or 0
+
+        # Engagement
+        all_members = (await session.execute(
+            select(Member).where(Member.is_active == True)
+        )).scalars().all()
+
+        activity_rows = (await session.execute(
+            select(
+                UserActivity.telegram_id,
+                func.count(UserActivity.id).label("cnt"),
+            )
+            .where(UserActivity.created_at >= week_ago)
+            .group_by(UserActivity.telegram_id)
+        )).all()
+        activity_map = {row[0]: row[1] for row in activity_rows}
+
+        engagement = []
+        for m in all_members:
+            if m.telegram_id <= 0:
+                status = "not_connected"
+                actions = 0
+            else:
+                actions = activity_map.get(m.telegram_id, 0)
+                status = "active" if actions > 5 else ("low" if actions > 0 else "inactive")
+            engagement.append({
+                "name": m.display_name or m.first_name or m.username or "?",
+                "username": m.username,
+                "status": status,
+                "actions": actions,
+            })
+        engagement.sort(key=lambda x: -x["actions"] if x["status"] != "not_connected" else -999)
 
         # Recent tasks (last 5)
         recent_tasks_result = await session.execute(
@@ -179,29 +250,35 @@ async def dashboard(user: str = Depends(get_current_user)):
             for t, m in recent_tasks_result.all()
         ]
 
-        # Recent meetings (last 3)
-        recent_meetings_result = await session.execute(
-            select(Meeting).order_by(Meeting.date.desc()).limit(3)
-        )
-        recent_meetings = [
-            {
-                "id": m.id,
-                "title": m.title,
-                "date": m.date.isoformat(),
-            }
-            for m in recent_meetings_result.scalars().all()
-        ]
-
     return {
         "stats": {
             "total_tasks": total_tasks,
             "done_tasks": done_tasks,
             "overdue_tasks": overdue_tasks,
             "in_progress_tasks": in_progress_tasks,
+            "new_tasks": new_tasks,
+            "pending_tasks": pending_tasks,
             "total_meetings": total_meetings,
+            "tasks_from_meetings": tasks_from_meetings,
+            "done_from_meetings": done_from_meetings,
+            "upcoming_this_week": upcoming_count,
         },
+        "last_meeting": {
+            "date": last_meeting.date.isoformat(),
+            "title": last_meeting.title,
+            "tasks_count": sum(1 for t in all_tasks if t.meeting_id == last_meeting.id),
+        } if last_meeting else None,
+        "next_meeting": {
+            "date": next_meeting.scheduled_date.isoformat(),
+            "title": next_meeting.title,
+            "agenda_requests": agenda_count,
+        } if next_meeting else None,
+        "overdue_by_person": [
+            {"name": name, "count": cnt}
+            for name, cnt in sorted(overdue_by_person.items(), key=lambda x: -x[1])
+        ],
+        "engagement": engagement,
         "recent_tasks": recent_tasks,
-        "recent_meetings": recent_meetings,
     }
 
 
@@ -777,6 +854,7 @@ async def get_agenda_requests(user: str = Depends(get_current_user)):
                 "id": r.id,
                 "topic": r.topic,
                 "reason": r.reason,
+                "duration_minutes": r.duration_minutes,
                 "member": m.name,
                 "is_included": r.is_included,
                 "created_at": r.created_at.isoformat(),
