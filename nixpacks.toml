@@ -1,2 +1,0 @@
-[phases.install]
-cmds = ["pip install --no-cache-dir asyncpg==0.30.0 && pip install --no-cache-dir -r requirements.txt"]
