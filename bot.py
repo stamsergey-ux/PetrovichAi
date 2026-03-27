@@ -70,11 +70,15 @@ async def main():
     # Clean up any stale webhook before polling
     await bot.delete_webhook(drop_pending_updates=True)
 
-    # Set bot commands (Menu button in bottom-left)
+    # Set default bot commands (Menu button in bottom-left)
+    # Role-specific commands are set per-user on /start
     from aiogram.types import BotCommand
     await bot.set_my_commands([
-        BotCommand(command="start", description="Перезапустить бот"),
-        BotCommand(command="help", description="Помощь и возможности"),
+        BotCommand(command="tasks", description="📋 Мои задачи"),
+        BotCommand(command="protocol", description="📝 Протокол"),
+        BotCommand(command="note", description="📝 Записать задачу"),
+        BotCommand(command="notes", description="📋 Мои заметки"),
+        BotCommand(command="help", description="❓ Помощь"),
     ])
 
     print("Bot started!")

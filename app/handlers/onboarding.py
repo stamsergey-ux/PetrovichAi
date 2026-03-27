@@ -1,11 +1,12 @@
 """Onboarding and /start, /help handlers."""
 
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command
 from aiogram.types import (
     Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
-    ReplyKeyboardMarkup, KeyboardButton,
+    ReplyKeyboardRemove, BotCommand,
 )
+from aiogram.types.bot_command_scope_chat import BotCommandScopeChat
 from sqlalchemy import select
 
 from app.database import async_session, Member
@@ -124,34 +125,41 @@ def _main_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _persistent_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
-    """Persistent reply keyboard — always visible at the bottom of the chat."""
-    if is_admin:
-        buttons = [
-            [KeyboardButton(text="📋 Мои задачи"), KeyboardButton(text="📝 Поставить задачу")],
-            [KeyboardButton(text="👥 Все задачи"), KeyboardButton(text="📊 Дашборд")],
-            [KeyboardButton(text="📝 Записать задачу"), KeyboardButton(text="📋 Мои заметки")],
-            [KeyboardButton(text="⚙️ Управление")],
+async def _set_user_commands(bot: Bot, chat_id: int, role: str):
+    """Set role-specific Menu commands for a user."""
+    if role == "chairman":
+        commands = [
+            BotCommand(command="tasks", description="📋 Мои задачи"),
+            BotCommand(command="newtask", description="📝 Поставить задачу"),
+            BotCommand(command="alltasks", description="👥 Все задачи"),
+            BotCommand(command="dashboard", description="📊 Дашборд"),
+            BotCommand(command="note", description="📝 Записать заметку"),
+            BotCommand(command="notes", description="📋 Мои заметки"),
+            BotCommand(command="protocol", description="📝 Протоколы"),
+            BotCommand(command="agenda", description="📌 Адженда"),
+            BotCommand(command="manage", description="⚙️ Управление"),
+            BotCommand(command="help", description="❓ Помощь"),
+        ]
+    elif role == "stakeholder":
+        commands = [
+            BotCommand(command="newtask", description="💎 Поставить задачу"),
+            BotCommand(command="assignments", description="💎 Мои поручения"),
+            BotCommand(command="protocol", description="📝 Протоколы"),
+            BotCommand(command="help", description="❓ Помощь"),
         ]
     else:
-        buttons = [
-            [KeyboardButton(text="📋 Мои задачи"), KeyboardButton(text="📝 Протокол")],
-            [KeyboardButton(text="📝 Записать задачу"), KeyboardButton(text="📋 Мои заметки")],
-            [KeyboardButton(text="❓ Помощь")],
+        commands = [
+            BotCommand(command="tasks", description="📋 Мои задачи"),
+            BotCommand(command="protocol", description="📝 Протоколы"),
+            BotCommand(command="note", description="📝 Записать заметку"),
+            BotCommand(command="notes", description="📋 Мои заметки"),
+            BotCommand(command="agenda_add", description="📌 Добавить в адженду"),
+            BotCommand(command="help", description="❓ Помощь"),
         ]
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
-
-
-
-
-def _stakeholder_keyboard() -> ReplyKeyboardMarkup:
-    """Focused persistent keyboard for stakeholder — task assignment & control."""
-    buttons = [
-        [KeyboardButton(text="💎 Поставить задачу"), KeyboardButton(text="💎 Мои поручения")],
-        [KeyboardButton(text="📝 Протокол")],
-        [KeyboardButton(text="❓ Помощь")],
-    ]
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    try:
+        await bot.set_my_commands(commands, scope=BotCommandScopeChat(chat_id=chat_id))
+    except Exception:
+        pass
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     """Handle /start — register user and show onboarding."""
@@ -205,14 +213,17 @@ async def cmd_start(message: Message):
 
     if stakeholder:
         text = STAKEHOLDER_INTRO.format(name=name)
-        keyboard = _stakeholder_keyboard()
+        role = "stakeholder"
+    elif chairman:
+        text = MEMBER_INTRO.format(name=name) + CHAIRMAN_EXTRA
+        role = "chairman"
     else:
         text = MEMBER_INTRO.format(name=name)
-        if chairman:
-            text += CHAIRMAN_EXTRA
-        keyboard = _persistent_keyboard(chairman)
+        role = "member"
 
-    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+    # Set role-specific Menu commands and remove reply keyboard
+    await _set_user_commands(message.bot, user.id, role)
+    await message.answer(text, parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
 
 
 @router.message(Command("help"))
@@ -236,3 +247,89 @@ async def cb_help(callback: CallbackQuery):
         text += CHAIRMAN_EXTRA
     await callback.message.answer(text, parse_mode="HTML", reply_markup=_main_keyboard(chairman))
     await callback.answer()
+
+
+# ── Menu command handlers ─────────────────────────────────────────────────────
+
+@router.message(Command("tasks"))
+async def cmd_tasks(message: Message):
+    from app.handlers.chat import _show_my_tasks
+    await _show_my_tasks(message)
+
+
+@router.message(Command("newtask"))
+async def cmd_newtask(message: Message, state):
+    if is_stakeholder(message.from_user.username):
+        from app.handlers.stakeholder import start_task_creation
+        await start_task_creation(message, state)
+    elif is_chairman(message.from_user.username):
+        from app.handlers.chairman_tasks import start_chairman_task
+        await start_chairman_task(message, state)
+    else:
+        await message.answer("⛔ Постановка задач доступна председателям и акционерам.")
+
+
+@router.message(Command("alltasks"))
+async def cmd_alltasks(message: Message):
+    from app.handlers.chat import _show_all_tasks
+    await _show_all_tasks(message)
+
+
+@router.message(Command("dashboard"))
+async def cmd_dashboard(message: Message):
+    if not is_chairman(message.from_user.username):
+        await message.answer("⛔ Дашборд доступен администраторам.")
+        return
+    from app.handlers.tasks import _send_dashboard_to
+    await _send_dashboard_to(message)
+
+
+@router.message(Command("note"))
+async def cmd_note(message: Message, state):
+    from app.handlers.personal import start_personal_task
+    await start_personal_task(message, state)
+
+
+@router.message(Command("notes"))
+async def cmd_notes(message: Message):
+    from app.handlers.personal import show_personal_tasks
+    await show_personal_tasks(message)
+
+
+@router.message(Command("protocol"))
+async def cmd_protocol(message: Message):
+    from app.handlers.chat import _show_last_protocol
+    await _show_last_protocol(message)
+
+
+@router.message(Command("agenda"))
+async def cmd_agenda(message: Message):
+    if not is_chairman(message.from_user.username):
+        await message.answer("⛔ Генерация адженды доступна администраторам.")
+        return
+    from app.handlers.chat import _send_agenda
+    await _send_agenda(message)
+
+
+@router.message(Command("manage"))
+async def cmd_manage(message: Message):
+    from app.handlers.chat import _show_advanced_menu
+    await _show_advanced_menu(message)
+
+
+@router.message(Command("assignments"))
+async def cmd_assignments(message: Message):
+    if not is_stakeholder(message.from_user.username):
+        await message.answer("⛔ Доступно акционерам.")
+        return
+    from app.handlers.stakeholder import _render_my_assignments
+    await _render_my_assignments(message)
+
+
+@router.message(Command("agenda_add"))
+async def cmd_agenda_add(message: Message):
+    await message.answer(
+        "📌 Чтобы добавить пункт в адженду, напиши:\n\n"
+        "<code>добавь в адженду: тема, 15 мин</code>",
+        parse_mode="HTML",
+    )
