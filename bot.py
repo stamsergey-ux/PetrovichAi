@@ -70,6 +70,13 @@ async def main():
     # Clean up any stale webhook before polling
     await bot.delete_webhook(drop_pending_updates=True)
 
+    # Set bot commands (Menu button in bottom-left)
+    from aiogram.types import BotCommand
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Перезапустить бот"),
+        BotCommand(command="help", description="Помощь и возможности"),
+    ])
+
     print("Bot started!")
     await dp.start_polling(bot)
 
