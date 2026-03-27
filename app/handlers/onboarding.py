@@ -168,8 +168,9 @@ async def cmd_start(message: Message):
 
         if not member and user.username:
             # Check if pre-seeded by username (placeholder telegram_id < 0)
+            # Use case-insensitive match — Telegram usernames are case-insensitive
             result2 = await session.execute(
-                select(Member).where(Member.username == user.username)
+                select(Member).where(Member.username.ilike(user.username))
             )
             member = result2.scalar_one_or_none()
 
