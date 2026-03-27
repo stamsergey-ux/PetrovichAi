@@ -268,7 +268,7 @@ async def cb_all_tasks(callback: CallbackQuery):
                 return (0,)  # last
             return (1, -(meeting.date.timestamp() if meeting and meeting.date else 0))
 
-        sorted_groups = sorted(groups.items(), key=sort_key, reverse=False)
+        sorted_groups = sorted(groups.items(), key=sort_key, reverse=True)
 
         total = len(rows)
         overdue_total = sum(1 for row in rows if row[0].status == "overdue")
@@ -353,7 +353,11 @@ async def cb_tasks_by_meeting(callback: CallbackQuery):
         if overdue:
             text += f"  🚨 {overdue} просрочено"
 
-        task_rows = _task_buttons(rows, show_assignee=True)
+        # Limit to 20 tasks per page to avoid Telegram "reply markup too long"
+        MAX_BUTTONS = 20
+        task_rows = _task_buttons(rows[:MAX_BUTTONS], show_assignee=True)
+        if len(rows) > MAX_BUTTONS:
+            text += f"\n<i>Показаны первые {MAX_BUTTONS} из {len(rows)}</i>"
         back_row = [InlineKeyboardButton(text="← Все протоколы", callback_data="all_tasks")]
         extra_rows = []
         if is_chairman(callback.from_user.username):
@@ -1870,7 +1874,10 @@ async def cb_overdue_tasks(callback: CallbackQuery):
         return
 
     text = f"🔴 <b>Просроченные задачи — {len(rows)}</b>"
-    task_rows = _task_buttons(rows, show_assignee=True)
+    MAX_BUTTONS = 20
+    task_rows = _task_buttons(rows[:MAX_BUTTONS], show_assignee=True)
+    if len(rows) > MAX_BUTTONS:
+        text += f"\n<i>Показаны первые {MAX_BUTTONS} из {len(rows)}</i>"
     keyboard = InlineKeyboardMarkup(inline_keyboard=task_rows) if task_rows else None
     await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
