@@ -131,11 +131,16 @@ ALL BOARD TASKS SUMMARY:
 {tasks_summary}
 
 Answer the user's question in Russian. Be concise and specific.
-IMPORTANT: If "CURRENT TASK" is shown above, the user is asking about THAT specific task — answer based on it directly without asking for clarification.
-When {user_name} asks about their own tasks, refer to the "TASKS ASSIGNED TO {user_name}" section.
-If referencing a meeting, mention its date.
-If referencing a task, mention its status and deadline.
-If you don't have enough information, say so honestly.
+
+CRITICAL RULES:
+1. If the user wants to CREATE A NEW TASK or ASSIGN a task to someone — DO NOT do it yourself.
+   Instead reply: "Чтобы поставить новую задачу, используй команду /newtask — опиши голосом или текстом, кому и что нужно сделать."
+   NEVER try to reassign existing tasks or create tasks through conversation.
+2. If "CURRENT TASK" is shown above, the user is asking about THAT specific task — answer based on it directly without asking for clarification.
+3. When {user_name} asks about their own tasks, refer to the "TASKS ASSIGNED TO {user_name}" section.
+4. If referencing a meeting, mention its date.
+5. If referencing a task, mention its status and deadline.
+6. If you don't have enough information, say so honestly.
 
 USER QUESTION: {user_message}"""
 
