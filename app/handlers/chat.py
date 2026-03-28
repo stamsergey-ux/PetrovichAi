@@ -659,17 +659,10 @@ async def _show_advanced_menu(message: Message):
         [InlineKeyboardButton(text="── СОВЕЩАНИЯ ──", callback_data="noop")],
         [
             InlineKeyboardButton(text="📌 Адженда", callback_data="adv_agenda"),
-            InlineKeyboardButton(text="📅 Назначить совещание", callback_data="adv_schedule"),
         ],
         [
             InlineKeyboardButton(text="🗑 Протоколы", callback_data="manage_protocols"),
             InlineKeyboardButton(text="📎 Материалы", callback_data="adv_materials"),
-        ],
-        # Section: Analytics
-        [InlineKeyboardButton(text="── АНАЛИТИКА ──", callback_data="noop")],
-        [
-            InlineKeyboardButton(text="📊 Аналитика", callback_data="adv_analytics"),
-            InlineKeyboardButton(text="📈 Гант (PDF)", callback_data="adv_gantt"),
         ],
         # Section: System
         [InlineKeyboardButton(text="── СИСТЕМА ──", callback_data="noop")],
