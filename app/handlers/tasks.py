@@ -1180,10 +1180,9 @@ async def cb_last_protocol(callback: CallbackQuery):
 
     date_str = meeting.date.strftime('%d.%m.%Y')
     title = escape(meeting.title or "Без названия")
-    participants = escape(meeting.participants or "—")
     summary = escape(meeting.summary or "—")
 
-    text = f"📝 <b>ПРОТОКОЛ</b>\n\n<b>{title}</b>\n📅 {date_str}\n👥 {participants}\n\n<b>Краткое содержание:</b>\n{summary}\n"
+    text = f"📝 <b>ПРОТОКОЛ</b>\n\n<b>{title}</b>\n📅 {date_str}\n\n<b>Краткое содержание:</b>\n{summary}\n"
 
     if meeting.decisions:
         try:

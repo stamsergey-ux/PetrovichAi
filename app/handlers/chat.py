@@ -306,13 +306,11 @@ async def cb_view_protocol(callback: CallbackQuery):
 
     date_str = meeting.date.strftime('%d.%m.%Y')
     title = escape(meeting.title or "Без названия")
-    participants = escape(meeting.participants or "—")
     summary = escape(meeting.summary or "—")
 
     text = f"📝 <b>ПРОТОКОЛ</b>\n\n"
     text += f"<b>{title}</b>\n"
-    text += f"📅 {date_str}\n"
-    text += f"👥 {participants}\n\n"
+    text += f"📅 {date_str}\n\n"
     text += f"<b>Краткое содержание:</b>\n{summary}\n"
 
     if meeting.decisions:
