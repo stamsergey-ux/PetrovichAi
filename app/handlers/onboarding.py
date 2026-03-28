@@ -125,21 +125,27 @@ def _main_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-async def _set_user_commands(bot: Bot, chat_id: int, role: str):
+PERSONAL_NOTES_USERS = {"vikamikhno"}  # Pilot: personal notes only for Виктория
+
+
+async def _set_user_commands(bot: Bot, chat_id: int, role: str, username: str | None = None):
     """Set role-specific Menu commands for a user."""
+    has_notes = username and username.lower() in PERSONAL_NOTES_USERS
+
     if role == "chairman":
         commands = [
             BotCommand(command="tasks", description="📋 Мои задачи"),
             BotCommand(command="newtask", description="📝 Поставить задачу"),
             BotCommand(command="alltasks", description="👥 Все задачи"),
             BotCommand(command="dashboard", description="📊 Дашборд"),
-            BotCommand(command="note", description="📝 Записать заметку"),
-            BotCommand(command="notes", description="📋 Мои заметки"),
             BotCommand(command="protocol", description="📝 Протоколы"),
             BotCommand(command="agenda", description="📌 Адженда"),
             BotCommand(command="manage", description="⚙️ Управление"),
             BotCommand(command="help", description="❓ Помощь"),
         ]
+        if has_notes:
+            commands.insert(5, BotCommand(command="note", description="📝 Записать заметку"))
+            commands.insert(6, BotCommand(command="notes", description="📋 Мои заметки"))
     elif role == "stakeholder":
         commands = [
             BotCommand(command="newtask", description="💎 Поставить задачу"),
@@ -151,11 +157,12 @@ async def _set_user_commands(bot: Bot, chat_id: int, role: str):
         commands = [
             BotCommand(command="tasks", description="📋 Мои задачи"),
             BotCommand(command="protocol", description="📝 Протоколы"),
-            BotCommand(command="note", description="📝 Записать заметку"),
-            BotCommand(command="notes", description="📋 Мои заметки"),
             BotCommand(command="agenda_add", description="📌 Добавить в адженду"),
             BotCommand(command="help", description="❓ Помощь"),
         ]
+        if has_notes:
+            commands.insert(2, BotCommand(command="note", description="📝 Записать заметку"))
+            commands.insert(3, BotCommand(command="notes", description="📋 Мои заметки"))
     try:
         await bot.set_my_commands(commands, scope=BotCommandScopeChat(chat_id=chat_id))
     except Exception:
@@ -222,7 +229,7 @@ async def cmd_start(message: Message):
         role = "member"
 
     # Set role-specific Menu commands and remove reply keyboard
-    await _set_user_commands(message.bot, user.id, role)
+    await _set_user_commands(message.bot, user.id, role, user.username)
     await message.answer(text, parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
 
 

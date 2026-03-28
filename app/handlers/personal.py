@@ -29,11 +29,20 @@ class PersonalTaskFSM(StatesGroup):
 
 # ── Entry points ─────────────────────────────────────────────────────────────
 
+PERSONAL_TASKS_USERS = {"vikamikhno"}  # Pilot: only Виктория Михно
+
+
+def _has_personal_access(username: str | None) -> bool:
+    return bool(username and username.lower() in PERSONAL_TASKS_USERS)
+
+
 @router.message(F.text.lower().in_({
     "📝 записать задачу", "записать задачу", "напоминалка",
     "напомни", "запиши", "заметка",
 }))
 async def start_personal_task(message: Message, state: FSMContext):
+    if not _has_personal_access(message.from_user.username):
+        return  # silently ignore for non-pilot users
     await state.set_state(PersonalTaskFSM.waiting_description)
     await message.answer(
         "📝 <b>Личная задача</b>\n\n"
@@ -106,6 +115,8 @@ async def _save_personal_task(message: Message, state: FSMContext, text: str):
 
 @router.message(F.text.lower().in_({"📋 мои заметки", "мои заметки", "мои напоминалки", "заметки"}))
 async def show_personal_tasks(message: Message):
+    if not _has_personal_access(message.from_user.username):
+        return
     await _render_personal_tasks(message)
 
 
@@ -165,10 +176,10 @@ async def cb_personal_done(callback: CallbackQuery):
     async with async_session() as session:
         task = await session.get(PersonalTask, task_id)
         if task:
-            task.is_done = True
+            await session.delete(task)
             await session.commit()
-    await callback.answer("✅ Выполнено!")
-    await callback.message.answer(f"✅ Заметка #{task_id} выполнена.")
+    await callback.answer("✅ Удалено!")
+    await callback.message.answer("✅ Задача выполнена и удалена из списка.")
 
 
 # ── Date parsing helpers ─────────────────────────────────────────────────────

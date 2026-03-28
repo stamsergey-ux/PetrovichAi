@@ -391,13 +391,14 @@ async def _dispatch_text(message: Message, raw_text: str, state: FSMContext | No
         return await show_materials(message)
 
     if text in ("📋 мои заметки", "мои заметки", "мои напоминалки", "заметки"):
-        from app.handlers.personal import show_personal_tasks
-        return await show_personal_tasks(message)
+        from app.handlers.personal import show_personal_tasks, _has_personal_access
+        if _has_personal_access(message.from_user.username):
+            return await show_personal_tasks(message)
 
     if text.startswith(("напомни ", "запиши ", "заметка ")):
-        # Quick capture: skip FSM, save directly
-        from app.handlers.personal import _save_personal_task_direct
-        return await _save_personal_task_direct(message, raw_text)
+        from app.handlers.personal import _save_personal_task_direct, _has_personal_access
+        if _has_personal_access(message.from_user.username):
+            return await _save_personal_task_direct(message, raw_text)
 
     # For everything else — AI chat with RAG
     await _ai_chat(message, override_text=raw_text, state=state)
