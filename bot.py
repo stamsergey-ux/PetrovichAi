@@ -75,9 +75,7 @@ async def main():
     from aiogram.types import BotCommand
     await bot.set_my_commands([
         BotCommand(command="tasks", description="📋 Мои задачи"),
-        BotCommand(command="protocol", description="📝 Протокол"),
-        BotCommand(command="note", description="📝 Записать задачу"),
-        BotCommand(command="notes", description="📋 Мои заметки"),
+        BotCommand(command="protocol", description="📝 Протоколы"),
         BotCommand(command="help", description="❓ Помощь"),
     ])
 

@@ -137,10 +137,10 @@ async def _set_user_commands(bot: Bot, chat_id: int, role: str, username: str | 
             BotCommand(command="tasks", description="📋 Мои задачи"),
             BotCommand(command="newtask", description="📝 Поставить задачу"),
             BotCommand(command="alltasks", description="👥 Все задачи"),
-            BotCommand(command="dashboard", description="📊 Дашборд"),
+            BotCommand(command="dashboard", description="📊 Сводка"),
             BotCommand(command="protocol", description="📝 Протоколы"),
             BotCommand(command="agenda", description="📌 Адженда"),
-            BotCommand(command="manage", description="⚙️ Управление"),
+            BotCommand(command="verify", description="✅ Верифицировать"),
             BotCommand(command="help", description="❓ Помощь"),
         ]
         if has_notes:
@@ -316,6 +316,15 @@ async def cmd_agenda(message: Message):
         return
     from app.handlers.chat import _send_agenda
     await _send_agenda(message)
+
+
+@router.message(Command("verify"))
+async def cmd_verify(message: Message):
+    if not is_chairman(message.from_user.username):
+        await message.answer("⛔ Верификация доступна администраторам.")
+        return
+    from app.handlers.task_verify import start_verification
+    await start_verification(message, user=message.from_user)
 
 
 @router.message(Command("manage"))

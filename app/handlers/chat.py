@@ -532,6 +532,7 @@ async def _show_last_protocol(message: Message):
         ])
 
     text += "\n<i>Нажми на кнопку, чтобы открыть протокол:</i>"
+    buttons.append([InlineKeyboardButton(text="📎 Материалы совещаний", callback_data="adv_materials")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
@@ -596,6 +597,13 @@ async def _show_all_tasks(message: Message):
         if len(btn_text) > 60:
             btn_text = btn_text[:59] + "…"
         btn_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"tasks_by_meeting:{mid}")])
+
+    # Add extra buttons for chairman
+    if is_chairman(message.from_user.username):
+        btn_rows.append([
+            InlineKeyboardButton(text="💎 Задачи акционера", callback_data="stk_all_tasks"),
+            InlineKeyboardButton(text="✅ Закрытые задачи", callback_data="all_closed_tasks"),
+        ])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=btn_rows)
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
