@@ -132,6 +132,7 @@ class AgendaRequest(Base):
     reason = Column(Text, nullable=True)
     duration_minutes = Column(Integer, nullable=True)  # requested time in minutes
     scheduled_meeting_id = Column(Integer, ForeignKey("scheduled_meetings.id"), nullable=True)
+    is_approved = Column(Boolean, nullable=True, default=None)  # None=pending, True=approved, False=rejected
     is_included = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -290,11 +291,30 @@ async def init_db():
 async def _migrate_db():
     """Add new columns to existing tables (safe, idempotent).
 
-    For PostgreSQL: create_all handles everything, migrations are SQLite-only.
+    For PostgreSQL: run ALTER TABLE for new columns, then approve pending agenda requests.
     For SQLite: run ALTER TABLE commands to add columns to existing tables.
     """
     if "postgresql" in DATABASE_URL or "postgres" in DATABASE_URL:
-        # PostgreSQL: create_all already created all tables with all columns
+        async with engine.begin() as conn:
+            # Add is_approved column if missing
+            try:
+                await conn.execute(
+                    __import__('sqlalchemy').text(
+                        "ALTER TABLE agenda_requests ADD COLUMN is_approved BOOLEAN DEFAULT NULL"
+                    )
+                )
+            except Exception:
+                pass  # column already exists
+
+            # One-time fix: approve all existing pending agenda requests (Ivanov's request)
+            try:
+                await conn.execute(
+                    __import__('sqlalchemy').text(
+                        "UPDATE agenda_requests SET is_approved = TRUE WHERE is_approved IS NULL"
+                    )
+                )
+            except Exception:
+                pass
         return
 
     import aiosqlite
@@ -315,6 +335,7 @@ async def _migrate_db():
                 "ALTER TABLE task_comments ADD COLUMN comment_type VARCHAR(20) DEFAULT 'comment'",
                 "CREATE TABLE IF NOT EXISTS meeting_materials (id INTEGER PRIMARY KEY, uploader_id INTEGER REFERENCES members(id), meeting_id INTEGER REFERENCES meetings(id), file_id VARCHAR(500) NOT NULL, file_name VARCHAR(500), file_type VARCHAR(20), description TEXT, created_at DATETIME)",
                 "ALTER TABLE agenda_requests ADD COLUMN duration_minutes INTEGER",
+                "ALTER TABLE agenda_requests ADD COLUMN is_approved BOOLEAN DEFAULT NULL",
                 "CREATE TABLE IF NOT EXISTS personal_tasks (id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES members(id), title VARCHAR(500) NOT NULL, remind_at DATETIME, is_done BOOLEAN DEFAULT FALSE, reminded BOOLEAN DEFAULT FALSE, created_at DATETIME)",
                 "CREATE TABLE IF NOT EXISTS user_activity (id INTEGER PRIMARY KEY, telegram_id INTEGER NOT NULL, action_type VARCHAR(30) NOT NULL, created_at DATETIME)",
                 "CREATE INDEX IF NOT EXISTS idx_user_activity_tg ON user_activity(telegram_id)",

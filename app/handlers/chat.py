@@ -11,7 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy import select
 
-from app.database import async_session, Task, Member, Meeting
+from app.database import async_session, Task, Member, Meeting, AgendaRequest, ScheduledMeeting
 from app.ai_service import chat_with_context, generate_agenda
 from app.rag import search_relevant_chunks
 from app.gantt import generate_gantt_pdf
@@ -206,8 +206,45 @@ async def _build_agenda() -> str:
         f"#{t.id} {t.title} -> {m.name if m else '?'}, deadline: {t.deadline}" for t, m in overdue_rows
     ) or "None"
 
+    # Fetch approved agenda requests from board members
+    async with async_session() as session:
+        next_meeting = (await session.execute(
+            select(ScheduledMeeting)
+            .where(ScheduledMeeting.is_completed == False)
+            .order_by(ScheduledMeeting.scheduled_date.asc())
+            .limit(1)
+        )).scalar_one_or_none()
+
+        requests_q = (
+            select(AgendaRequest, Member)
+            .join(Member, AgendaRequest.member_id == Member.id)
+            .where(AgendaRequest.is_approved == True)
+            .where(AgendaRequest.is_included == False)
+        )
+        if next_meeting:
+            requests_q = requests_q.where(
+                AgendaRequest.scheduled_meeting_id == next_meeting.id
+            )
+        approved_rows = (await session.execute(requests_q)).all()
+
+    if approved_rows:
+        member_requests = "\n".join(
+            f"- {m.display_name or m.first_name}: {r.topic} ({r.duration_minutes or 10} мин.)"
+            for r, m in approved_rows
+        )
+        agenda_items += f"\n\nЗАПРОСЫ УЧАСТНИКОВ (одобрены председателем):\n{member_requests}"
+
     task_review = await _build_task_review_block()
     ai_agenda = await generate_agenda(meetings_ctx, open_tasks_text, overdue_text, agenda_items or "None")
+
+    # Mark approved requests as included
+    if approved_rows:
+        async with async_session() as session:
+            for r, _m in approved_rows:
+                req = await session.get(AgendaRequest, r.id)
+                if req:
+                    req.is_included = True
+            await session.commit()
 
     if task_review:
         return task_review + "\n\n" + ai_agenda

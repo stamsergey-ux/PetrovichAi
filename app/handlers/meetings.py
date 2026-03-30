@@ -149,16 +149,129 @@ async def add_agenda_item(message: Message):
         )
         session.add(request)
         await session.commit()
+        await session.refresh(request)
+        request_id = request.id
+
+        # Fetch chairmen for notification
+        chairmen = (await session.execute(
+            select(Member).where(Member.is_chairman == True)
+        )).scalars().all()
 
     name = member.display_name or member.first_name or "Участник"
     meeting_info = f" (совещание {next_meeting.scheduled_date.strftime('%d.%m.%Y')})" if next_meeting else ""
     dur_info = f"\n⏱ Время: {duration_minutes} мин." if duration_minutes else "\n⏱ Время: 10 мин. (по умолчанию)"
     await message.answer(
-        f"📌 Пункт добавлен в адженду{escape(meeting_info)}!\n\n"
+        f"📌 Пункт отправлен на согласование председателю{escape(meeting_info)}!\n\n"
         f"👤 {escape(name)}\n"
         f"📋 {escape(topic)}{dur_info}",
         parse_mode="HTML",
     )
+
+    # Notify all chairmen with approve/reject buttons
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Одобрить", callback_data=f"agenda_ok:{request_id}"),
+        InlineKeyboardButton(text="❌ Отклонить", callback_data=f"agenda_no:{request_id}"),
+    ]])
+    for ch in chairmen:
+        if ch.telegram_id > 0:
+            try:
+                await message.bot.send_message(
+                    ch.telegram_id,
+                    f"📌 <b>Запрос в адженду</b>\n\n"
+                    f"👤 {escape(name)}\n"
+                    f"📋 {escape(topic)}{dur_info}\n\n"
+                    f"Одобрить включение в повестку?",
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+            except Exception as e:
+                logger.warning(f"Could not notify chairman {ch.telegram_id}: {e}")
+
+
+@router.callback_query(F.data.startswith("agenda_ok:"))
+async def cb_agenda_approve(callback: CallbackQuery):
+    """Chairman approves an agenda request."""
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Доступно администраторам", show_alert=True)
+        return
+
+    request_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        req = await session.get(AgendaRequest, request_id)
+        if not req:
+            await callback.answer("Запрос не найден", show_alert=True)
+            return
+        if req.is_approved is not None:
+            status = "одобрен" if req.is_approved else "отклонён"
+            await callback.answer(f"Уже {status}", show_alert=True)
+            return
+
+        req.is_approved = True
+        await session.commit()
+
+        member = await session.get(Member, req.member_id)
+
+    await callback.answer("✅ Одобрено")
+    await callback.message.edit_text(
+        callback.message.text + "\n\n✅ <b>Одобрено</b>",
+        parse_mode="HTML",
+    )
+
+    # Notify the requesting member
+    if member and member.telegram_id > 0:
+        try:
+            await callback.bot.send_message(
+                member.telegram_id,
+                f"✅ <b>Ваш пункт адженды одобрен председателем!</b>\n\n"
+                f"📋 {escape(req.topic)}\n\n"
+                f"Пункт будет включён в повестку следующего совещания.",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.warning(f"Could not notify member {member.telegram_id}: {e}")
+
+
+@router.callback_query(F.data.startswith("agenda_no:"))
+async def cb_agenda_reject(callback: CallbackQuery):
+    """Chairman rejects an agenda request."""
+    if not is_chairman(callback.from_user.username):
+        await callback.answer("⛔ Доступно администраторам", show_alert=True)
+        return
+
+    request_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        req = await session.get(AgendaRequest, request_id)
+        if not req:
+            await callback.answer("Запрос не найден", show_alert=True)
+            return
+        if req.is_approved is not None:
+            status = "одобрен" if req.is_approved else "отклонён"
+            await callback.answer(f"Уже {status}", show_alert=True)
+            return
+
+        req.is_approved = False
+        await session.commit()
+
+        member = await session.get(Member, req.member_id)
+
+    await callback.answer("❌ Отклонено")
+    await callback.message.edit_text(
+        callback.message.text + "\n\n❌ <b>Отклонено</b>",
+        parse_mode="HTML",
+    )
+
+    # Notify the requesting member
+    if member and member.telegram_id > 0:
+        try:
+            await callback.bot.send_message(
+                member.telegram_id,
+                f"❌ <b>Ваш пункт адженды отклонён председателем</b>\n\n"
+                f"📋 {escape(req.topic)}\n\n"
+                f"Вы можете уточнить у председателя причину.",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.warning(f"Could not notify member {member.telegram_id}: {e}")
 
 
 # ─── Pre-meeting status collection ───────────────────────────────────
