@@ -315,6 +315,17 @@ async def _migrate_db():
                 )
             except Exception:
                 pass
+
+            # Fix: ensure Виктория Михно has is_chairman=True (not stakeholder)
+            try:
+                await conn.execute(
+                    __import__('sqlalchemy').text(
+                        "UPDATE members SET is_chairman = TRUE, is_stakeholder = FALSE "
+                        "WHERE LOWER(username) = 'vikamikhno'"
+                    )
+                )
+            except Exception:
+                pass
         return
 
     import aiosqlite

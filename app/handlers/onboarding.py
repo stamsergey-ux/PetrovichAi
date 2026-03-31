@@ -218,12 +218,12 @@ async def cmd_start(message: Message):
 
     name = user.first_name or user.username or "коллега"
 
-    if stakeholder:
-        text = STAKEHOLDER_INTRO.format(name=name)
-        role = "stakeholder"
-    elif chairman:
+    if chairman:
         text = MEMBER_INTRO.format(name=name) + CHAIRMAN_EXTRA
         role = "chairman"
+    elif stakeholder:
+        text = STAKEHOLDER_INTRO.format(name=name)
+        role = "stakeholder"
     else:
         text = MEMBER_INTRO.format(name=name)
         role = "member"
