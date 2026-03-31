@@ -316,27 +316,12 @@ async def _migrate_db():
             except Exception:
                 pass
 
-            # Fix: merge duplicate member records (placeholder + real)
-            # Keep the record with real telegram_id (> 0), delete placeholder
+            # Fix: delete ALL placeholder records (telegram_id < 0)
+            # Real users already have records with real telegram_id from /start
             try:
                 await conn.execute(
                     __import__('sqlalchemy').text(
-                        "DELETE FROM members WHERE telegram_id < 0 "
-                        "AND LOWER(username) IN ("
-                        "  SELECT LOWER(username) FROM members "
-                        "  WHERE telegram_id > 0 AND username IS NOT NULL"
-                        ")"
-                    )
-                )
-            except Exception:
-                pass
-
-            # Fix: ensure Виктория Михно has is_chairman=True (not stakeholder)
-            try:
-                await conn.execute(
-                    __import__('sqlalchemy').text(
-                        "UPDATE members SET is_chairman = TRUE, is_stakeholder = FALSE "
-                        "WHERE LOWER(username) = 'vikamikhno'"
+                        "DELETE FROM members WHERE telegram_id < 0"
                     )
                 )
             except Exception:
