@@ -189,6 +189,39 @@ async def cmd_start(message: Message):
             )
             member = result2.scalar_one_or_none()
 
+        # Check for duplicate: member found by telegram_id but a separate
+        # placeholder record exists with the same username (from seed)
+        placeholder = None
+        if member and user.username:
+            result3 = await session.execute(
+                select(Member).where(
+                    Member.username.ilike(user.username),
+                    Member.id != member.id,
+                )
+            )
+            placeholder = result3.scalar_one_or_none()
+            if placeholder:
+                # Merge: take display_name and flags from placeholder, then delete it
+                if placeholder.display_name:
+                    member.display_name = placeholder.display_name
+                if placeholder.is_chairman:
+                    member.is_chairman = True
+                if placeholder.is_stakeholder:
+                    member.is_stakeholder = True
+                # Reassign any tasks/agenda_requests pointing to the placeholder
+                from app.database import Task, AgendaRequest
+                await session.execute(
+                    Task.__table__.update()
+                    .where(Task.assignee_id == placeholder.id)
+                    .values(assignee_id=member.id)
+                )
+                await session.execute(
+                    AgendaRequest.__table__.update()
+                    .where(AgendaRequest.member_id == placeholder.id)
+                    .values(member_id=member.id)
+                )
+                await session.delete(placeholder)
+
         if not member:
             member = Member(
                 telegram_id=user.id,
