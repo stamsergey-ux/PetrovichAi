@@ -28,21 +28,8 @@ class TaskEditDeadline(StatesGroup):
     waiting_date = State()
 
 
-class TaskQuestion(StatesGroup):
-    waiting_question = State()   # assignee typing/recording their question
-    waiting_answer = State()     # chairman typing/recording their answer
 
 
-class TaskAddComment(StatesGroup):
-    waiting_text = State()       # any user typing/recording a free comment
-
-
-class TaskDiscussion(StatesGroup):
-    waiting_message = State()
-
-
-class TaskReply(StatesGroup):
-    waiting_reply = State()
 
 
 # Status icons including pending_done
@@ -545,19 +532,7 @@ async def cb_bulk_delete(callback: CallbackQuery, state: FSMContext, bot: Bot):
         )
         await callback.answer(f"Удалено {len(selected)}")
 
-        notified = set()
-        for row in task_rows:
-            task, member = row[0], row[1]
-            if member and member.telegram_id and member.telegram_id > 0 and member.telegram_id not in notified:
-                notified.add(member.telegram_id)
-                try:
-                    await bot.send_message(
-                        member.telegram_id,
-                        f"🗑 <b>Председатель удалил несколько задач</b>",
-                        parse_mode="HTML",
-                    )
-                except Exception:
-                    pass
+        # No notifications sent to assignees
     except Exception as e:
         await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
 
@@ -598,20 +573,7 @@ async def cb_bulk_confirm(callback: CallbackQuery, state: FSMContext, bot: Bot):
         )
         await callback.answer(f"Принято {len(selected)}")
 
-        notified = set()
-        for row in task_rows:
-            task, member = row[0], row[1]
-            if member and member.telegram_id and member.telegram_id > 0 and member.telegram_id not in notified:
-                notified.add(member.telegram_id)
-                try:
-                    await bot.send_message(
-                        member.telegram_id,
-                        f"✅ <b>Председатель подтвердил выполнение задач</b>\n\n"
-                        f"<i>Несколько задач отмечены как выполненные.</i>",
-                        parse_mode="HTML",
-                    )
-                except Exception:
-                    pass
+        # No notifications sent to assignees
     except Exception as e:
         await callback.answer(f"Ошибка: {e}"[:200], show_alert=True)
 
@@ -947,44 +909,15 @@ async def _save_and_notify(message: Message, state: FSMContext, bot: Bot, commen
         if not task:
             await message.answer("Задача не найдена.")
             return
-        task.status = "pending_done"
+        task.status = "done"
+        task.completed_at = datetime.utcnow()
         task.completion_comment = comment
         await session.commit()
 
-        assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
-        assignee_name = assignee.name if assignee else "—"
-
-        # Load all chairmen
-        chairmen = (await session.execute(
-            select(Member).where(Member.is_chairman == True)
-        )).scalars().all()
-
     await message.answer(
-        f"🟡 <b>Готово!</b> Задача #{task_id} отправлена председателю на подтверждение.",
+        f"✅ <b>Задача #{task_id} закрыта!</b>",
         parse_mode="HTML",
     )
-
-    # Notify all chairmen
-    confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Подтвердить выполнение", callback_data=f"done_confirm:{task_id}"),
-            InlineKeyboardButton(text="↩️ Вернуть в работу", callback_data=f"done_return:{task_id}"),
-        ]
-    ])
-    for ch in chairmen:
-        if ch.telegram_id and ch.telegram_id > 0:
-            try:
-                await bot.send_message(
-                    ch.telegram_id,
-                    f"🟡 <b>Задача выполнена — требует подтверждения</b>\n\n"
-                    f"<b>#{task_id}</b> {escape(task.title)}\n"
-                    f"👤 Исполнитель: {escape(assignee_name)}\n\n"
-                    f"💬 <b>Как выполнено:</b>\n{escape(comment)}",
-                    parse_mode="HTML",
-                    reply_markup=confirm_kb,
-                )
-            except Exception:
-                pass
 
 
 # ── Chairman confirms or returns task ─────────────────────────────────────────
@@ -1012,17 +945,7 @@ async def cb_confirm_done(callback: CallbackQuery, bot: Bot):
         parse_mode="HTML",
     )
 
-    # Notify assignee
-    if assignee and assignee.telegram_id and assignee.telegram_id > 0:
-        try:
-            await bot.send_message(
-                assignee.telegram_id,
-                f"✅ <b>Председатель подтвердил выполнение задачи #{task_id}</b>\n\n"
-                f"{escape(task.title)}\n\n<i>Задача закрыта.</i>",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
+    # No notification to assignee
 
 
 @router.callback_query(F.data.startswith("done_return:"))
@@ -1048,16 +971,7 @@ async def cb_return_task(callback: CallbackQuery, bot: Bot):
         parse_mode="HTML",
     )
 
-    if assignee and assignee.telegram_id and assignee.telegram_id > 0:
-        try:
-            await bot.send_message(
-                assignee.telegram_id,
-                f"↩️ <b>Председатель вернул задачу #{task_id} в работу</b>\n\n"
-                f"{escape(task.title)}\n\n<i>Уточни детали и выполни повторно.</i>",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
+    # No notification to assignee
 
 
 # ── noop for disabled buttons ─────────────────────────────────────────────────
@@ -1124,16 +1038,7 @@ async def cb_task_delete_confirm(callback: CallbackQuery, bot: Bot):
         parse_mode="HTML",
     )
 
-    # Notify assignee
-    if assignee and assignee.telegram_id and assignee.telegram_id > 0:
-        try:
-            await bot.send_message(
-                assignee.telegram_id,
-                f"🗑 <b>Задача #{task_id} была удалена председателем</b>\n\n<i>{escape(title)}</i>",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
+    # No notification to assignee
 
 
 # ── In progress ────────────────────────────────────────────────────────────────
@@ -1472,387 +1377,6 @@ async def cb_all_closed_meeting(callback: CallbackQuery):
     await callback.answer()
 
 
-# ── Q&A: assignee asks clarification question ─────────────────────────────────
-
-@router.callback_query(F.data.startswith("task_ask:"))
-async def cb_ask_question(callback: CallbackQuery, state: FSMContext):
-    task_id = int(callback.data.split(":")[1])
-    async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if not task:
-            await callback.answer("Задача не найдена", show_alert=True)
-            return
-        assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
-        if not assignee or assignee.telegram_id != callback.from_user.id:
-            await callback.answer("Только исполнитель может задать вопрос", show_alert=True)
-            return
-
-    await state.set_state(TaskQuestion.waiting_question)
-    await state.update_data(task_id=task_id)
-    await callback.message.answer(
-        f"❓ <b>Вопрос по задаче #{task_id}</b>\n\n"
-        "Напишите или запишите голосовое сообщение с вашим вопросом.\n"
-        "Председатель получит уведомление и сможет ответить.",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="❌ Отмена", callback_data="qa_cancel"),
-        ]]),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "qa_cancel")
-async def cb_qa_cancel(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.answer("Отменено.")
-    await callback.answer()
-
-
-@router.message(TaskQuestion.waiting_question, F.text)
-async def process_question_text(message: Message, state: FSMContext):
-    data = await state.get_data()
-    task_id = data.get("task_id")
-    await state.clear()
-    await _submit_question(task_id, message.from_user.id, message.text.strip(), message.bot, message)
-
-
-@router.message(TaskQuestion.waiting_question, F.voice)
-async def process_question_voice(message: Message, state: FSMContext, bot: Bot):
-    data = await state.get_data()
-    task_id = data.get("task_id")
-    await message.answer("🎙 Распознаю голосовое сообщение...")
-    try:
-        from app.voice import transcribe_voice
-        file = await bot.download(message.voice)
-        text = await transcribe_voice(file.read(), ".ogg")
-        if not text:
-            await message.answer("❌ Не удалось распознать голос. Напишите вопрос текстом.")
-            return
-        await state.clear()
-        await _submit_question(task_id, message.from_user.id, text, bot, message)
-    except Exception as e:
-        await message.answer(f"❌ Ошибка распознавания: {e}")
-
-
-async def _submit_question(task_id: int, author_tg_id: int, text: str, bot: Bot, message: Message):
-    """Save question comment and notify all chairmen."""
-    async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if not task:
-            await message.answer("❌ Задача не найдена.")
-            return
-
-        author = (await session.execute(
-            select(Member).where(Member.telegram_id == author_tg_id)
-        )).scalar_one_or_none()
-
-        comment = TaskComment(
-            task_id=task_id,
-            author_id=author.id if author else None,
-            text=text,
-            comment_type="question",
-        )
-        session.add(comment)
-        await session.commit()
-        await session.refresh(comment)
-
-        chairmen = (await session.execute(
-            select(Member).where(Member.is_chairman == True)
-        )).scalars().all()
-
-        author_name = escape(author.name if author else "Исполнитель")
-        task_title = escape(task.title)
-        comment_id = comment.id
-
-    await message.answer(
-        "✅ Вопрос отправлен председателю.\nОжидайте ответа — он придёт сюда.",
-        parse_mode="HTML",
-    )
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="💬 Ответить", callback_data=f"task_reply:{task_id}:{comment_id}"),
-    ]])
-    for ch in chairmen:
-        if ch.telegram_id and ch.telegram_id > 0:
-            try:
-                await bot.send_message(
-                    ch.telegram_id,
-                    f"❓ <b>Вопрос по задаче #{task_id}</b>\n\n"
-                    f"<b>{task_title}</b>\n\n"
-                    f"👤 <b>{author_name}</b> спрашивает:\n"
-                    f"<i>{escape(text)}</i>",
-                    parse_mode="HTML",
-                    reply_markup=kb,
-                )
-            except Exception:
-                pass
-
-
-# ── Q&A: chairman answers ───────────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("task_reply:"))
-async def cb_answer_question(callback: CallbackQuery, state: FSMContext):
-    if not is_chairman(callback.from_user.username):
-        await callback.answer("⛔ Только для председателя", show_alert=True)
-        return
-
-    parts = callback.data.split(":")
-    task_id = int(parts[1])
-    comment_id = int(parts[2])
-
-    await state.set_state(TaskQuestion.waiting_answer)
-    await state.update_data(task_id=task_id, question_comment_id=comment_id)
-    await callback.message.answer(
-        f"💬 <b>Ответ на вопрос по задаче #{task_id}</b>\n\n"
-        "Напишите или запишите голосовой ответ:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="❌ Отмена", callback_data="qa_cancel"),
-        ]]),
-    )
-    await callback.answer()
-
-
-@router.message(TaskQuestion.waiting_answer, F.text)
-async def process_answer_text(message: Message, state: FSMContext):
-    data = await state.get_data()
-    task_id = data.get("task_id")
-    await state.clear()
-    await _submit_answer(task_id, message.from_user.id, message.text.strip(), message.bot, message)
-
-
-@router.message(TaskQuestion.waiting_answer, F.voice)
-async def process_answer_voice(message: Message, state: FSMContext, bot: Bot):
-    data = await state.get_data()
-    task_id = data.get("task_id")
-    await message.answer("🎙 Распознаю голосовой ответ...")
-    try:
-        from app.voice import transcribe_voice
-        file = await bot.download(message.voice)
-        text = await transcribe_voice(file.read(), ".ogg")
-        if not text:
-            await message.answer("❌ Не удалось распознать. Напишите ответ текстом.")
-            return
-        await state.clear()
-        await _submit_answer(task_id, message.from_user.id, text, bot, message)
-    except Exception as e:
-        await message.answer(f"❌ Ошибка распознавания: {e}")
-
-
-async def _submit_answer(task_id: int, chairman_tg_id: int, text: str, bot: Bot, message: Message):
-    """Save answer comment and notify the assignee."""
-    async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if not task:
-            await message.answer("❌ Задача не найдена.")
-            return
-
-        chairman = (await session.execute(
-            select(Member).where(Member.telegram_id == chairman_tg_id)
-        )).scalar_one_or_none()
-
-        comment = TaskComment(
-            task_id=task_id,
-            author_id=chairman.id if chairman else None,
-            text=text,
-            comment_type="answer",
-        )
-        session.add(comment)
-        await session.commit()
-
-        assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
-        chairman_name = escape(chairman.name if chairman else "Председатель")
-        task_title = escape(task.title)
-
-    await message.answer("✅ Ответ отправлен исполнителю.", parse_mode="HTML")
-
-    if assignee and assignee.telegram_id and assignee.telegram_id > 0:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Принять задачу в работу", callback_data=f"task_accept:{task_id}")],
-            [InlineKeyboardButton(text="❓ Задать ещё вопрос", callback_data=f"task_ask:{task_id}")],
-        ])
-        try:
-            await bot.send_message(
-                assignee.telegram_id,
-                f"💬 <b>Ответ председателя по задаче #{task_id}</b>\n\n"
-                f"<b>{task_title}</b>\n\n"
-                f"👤 <b>{chairman_name}</b> отвечает:\n"
-                f"<i>{escape(text)}</i>",
-                parse_mode="HTML",
-                reply_markup=kb,
-            )
-        except Exception:
-            pass
-
-
-# ── Task accept after Q&A ───────────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("task_accept:"))
-async def cb_task_accept(callback: CallbackQuery):
-    task_id = int(callback.data.split(":")[1])
-    async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if not task:
-            await callback.answer("Задача не найдена", show_alert=True)
-            return
-
-        if task.status == "new":
-            task.status = "in_progress"
-            await session.commit()
-
-        assignee_name = ""
-        if task.assignee_id:
-            assignee = await session.get(Member, task.assignee_id)
-            assignee_name = assignee.name if assignee else ""
-
-        chairmen = (await session.execute(
-            select(Member).where(Member.is_chairman == True)
-        )).scalars().all()
-        task_title = escape(task.title)
-
-    await callback.message.answer(
-        f"✅ <b>Задача #{task_id} принята в работу!</b>\n\n"
-        f"<b>{task_title}</b>\n\n"
-        "Статус: 🔵 В работе",
-        parse_mode="HTML",
-        reply_markup=_task_keyboard(task_id, "in_progress", is_assignee=True),
-    )
-    await callback.answer("Задача принята!")
-
-    for ch in chairmen:
-        if ch.telegram_id and ch.telegram_id > 0:
-            try:
-                await callback.bot.send_message(
-                    ch.telegram_id,
-                    f"✅ <b>{escape(assignee_name)}</b> принял задачу в работу\n\n"
-                    f"<b>#{task_id}</b> {task_title}",
-                    parse_mode="HTML",
-                )
-            except Exception:
-                pass
-
-
-# ── Free comment on a task ─────────────────────────────────────────────────────
-
-@router.callback_query(F.data.startswith("task_comment:"))
-async def cb_task_comment(callback: CallbackQuery, state: FSMContext):
-    task_id = int(callback.data.split(":")[1])
-    async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if not task:
-            await callback.answer("Задача не найдена", show_alert=True)
-            return
-        # Only chairman or the assignee can comment
-        admin = is_chairman(callback.from_user.username)
-        assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
-        is_assignee = bool(assignee and assignee.telegram_id == callback.from_user.id)
-        if not admin and not is_assignee:
-            await callback.answer("⛔ Комментировать могут только исполнитель или председатель", show_alert=True)
-            return
-
-    await state.set_state(TaskAddComment.waiting_text)
-    await state.update_data(task_id=task_id)
-    await callback.message.answer(
-        f"💬 <b>Комментарий к задаче #{task_id}</b>\n\n"
-        "Напишите или запишите голосовой комментарий:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="❌ Отмена", callback_data="comment_cancel"),
-        ]]),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "comment_cancel")
-async def cb_comment_cancel(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.answer("Отменено.")
-    await callback.answer()
-
-
-@router.message(TaskAddComment.waiting_text, F.text)
-async def process_comment_text(message: Message, state: FSMContext, bot: Bot):
-    data = await state.get_data()
-    task_id = data.get("task_id")
-    await state.clear()
-    await _submit_free_comment(task_id, message.from_user.id, message.text.strip(), bot, message)
-
-
-@router.message(TaskAddComment.waiting_text, F.voice)
-async def process_comment_voice(message: Message, state: FSMContext, bot: Bot):
-    data = await state.get_data()
-    task_id = data.get("task_id")
-    await message.answer("🎙 Распознаю голосовой комментарий...")
-    try:
-        from app.voice import transcribe_voice
-        file = await bot.download(message.voice)
-        text = await transcribe_voice(file.read(), ".ogg")
-        if not text:
-            await message.answer("❌ Не удалось распознать. Напишите текстом.")
-            return
-        await message.answer(f"📝 <i>{escape(text)}</i>", parse_mode="HTML")
-        await state.clear()
-        await _submit_free_comment(task_id, message.from_user.id, text, bot, message)
-    except Exception as e:
-        await message.answer(f"❌ Ошибка распознавания: {e}")
-
-
-async def _submit_free_comment(task_id: int, author_tg_id: int, text: str, bot: Bot, message: Message):
-    """Save a free comment and notify the other party."""
-    async with async_session() as session:
-        task = await session.get(Task, task_id)
-        if not task:
-            await message.answer("❌ Задача не найдена.")
-            return
-
-        author = (await session.execute(
-            select(Member).where(Member.telegram_id == author_tg_id)
-        )).scalar_one_or_none()
-
-        comment = TaskComment(
-            task_id=task_id,
-            author_id=author.id if author else None,
-            text=text,
-            comment_type="comment",
-        )
-        session.add(comment)
-        await session.commit()
-
-        assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
-        author_name = escape(author.name if author else "Участник")
-        task_title = escape(task.title)
-        is_author_chairman = is_chairman(message.from_user.username)
-
-        chairmen = (await session.execute(
-            select(Member).where(Member.is_chairman == True)
-        )).scalars().all() if not is_author_chairman else []
-
-    await message.answer("✅ Комментарий добавлен.", parse_mode="HTML")
-
-    notif_text = (
-        f"💬 <b>Комментарий к задаче #{task_id}</b>\n\n"
-        f"<b>{task_title}</b>\n\n"
-        f"👤 <b>{author_name}</b>:\n"
-        f"<i>{escape(text)}</i>"
-    )
-    view_kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=f"📋 Открыть задачу #{task_id}", callback_data=f"task_detail:{task_id}"),
-    ]])
-
-    if is_author_chairman and assignee and assignee.telegram_id and assignee.telegram_id > 0:
-        try:
-            await bot.send_message(assignee.telegram_id, notif_text, parse_mode="HTML", reply_markup=view_kb)
-        except Exception:
-            pass
-    elif not is_author_chairman:
-        for ch in chairmen:
-            if ch.telegram_id and ch.telegram_id > 0:
-                try:
-                    await bot.send_message(ch.telegram_id, notif_text, parse_mode="HTML", reply_markup=view_kb)
-                except Exception:
-                    pass
-
-
 # ── Overdue tasks filter ──────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "overdue_tasks")
@@ -1882,106 +1406,3 @@ async def cb_overdue_tasks(callback: CallbackQuery):
     await callback.answer()
 
 
-# ── Task discussion (bidirectional comment notifications) ─────────────────────
-
-@router.callback_query(F.data.startswith("task_reply:"))
-async def cb_start_reply(callback: CallbackQuery, state: FSMContext):
-    """Quick reply to a task comment from notification."""
-    task_id = int(callback.data.split(":")[1])
-    await state.set_state(TaskReply.waiting_reply)
-    await state.update_data(task_id=task_id)
-    await callback.answer()
-    await callback.message.answer(
-        f"↩️ Ответ к задаче <b>#{task_id}</b> — напиши текстом или голосом:",
-        parse_mode="HTML",
-    )
-
-
-@router.message(TaskReply.waiting_reply, F.text)
-async def process_reply_text(message: Message, state: FSMContext, bot: Bot):
-    await _save_discussion_comment(message, state, bot, message.text)
-
-
-@router.message(TaskReply.waiting_reply, F.voice)
-async def process_reply_voice(message: Message, state: FSMContext, bot: Bot):
-    await message.answer("🎙 Распознаю...")
-    try:
-        from app.voice import transcribe_voice
-        file = await bot.download(message.voice)
-        text = await transcribe_voice(file.read(), ".ogg")
-        if not text:
-            await message.answer("⚠️ Не удалось распознать. Напиши текстом.")
-            return
-        await message.answer(f"📝 <i>{escape(text)}</i>", parse_mode="HTML")
-        await _save_discussion_comment(message, state, bot, text)
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
-
-
-async def _save_discussion_comment(message: Message, state: FSMContext, bot: Bot, text: str):
-    """Save comment and notify the other party (creator or assignee)."""
-    data = await state.get_data()
-    task_id = data["task_id"]
-    await state.clear()
-
-    async with async_session() as session:
-        author = (await session.execute(
-            select(Member).where(Member.telegram_id == message.from_user.id)
-        )).scalar_one_or_none()
-        if not author:
-            await message.answer("Нажми /start для регистрации.")
-            return
-
-        task = await session.get(Task, task_id)
-        if not task:
-            await message.answer("Задача не найдена.")
-            return
-
-        comment = TaskComment(
-            task_id=task_id,
-            author_id=author.id,
-            text=text,
-            created_at=datetime.utcnow(),
-        )
-        session.add(comment)
-        await session.commit()
-
-        assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
-        creator = await session.get(Member, task.created_by_id) if task.created_by_id else None
-        chairmen = (await session.execute(
-            select(Member).where(Member.is_chairman == True)
-        )).scalars().all()
-
-    await message.answer(
-        f"💬 Комментарий к задаче <b>#{task_id}</b> сохранён.",
-        parse_mode="HTML",
-    )
-
-    author_name = author.display_name or author.first_name or "Участник"
-    reply_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="↩️ Ответить", callback_data=f"task_reply:{task_id}")],
-        [InlineKeyboardButton(text="📋 Открыть задачу", callback_data=f"task_detail:{task_id}")],
-    ])
-
-    notification = (
-        f"💬 <b>Новый комментарий к задаче #{task_id}</b>\n\n"
-        f"📋 {escape(task.title)}\n"
-        f"👤 {escape(author_name)}:\n"
-        f"<i>{escape(text[:500])}</i>"
-    )
-
-    recipients: set[int] = set()
-    if assignee and assignee.telegram_id > 0 and assignee.telegram_id != message.from_user.id:
-        recipients.add(assignee.telegram_id)
-    if creator and creator.telegram_id > 0 and creator.telegram_id != message.from_user.id:
-        recipients.add(creator.telegram_id)
-    if assignee and assignee.telegram_id == message.from_user.id:
-        for ch in chairmen:
-            if ch.telegram_id > 0 and ch.telegram_id != message.from_user.id:
-                recipients.add(ch.telegram_id)
-
-    for tg_id in recipients:
-        try:
-            await bot.send_message(tg_id, notification, parse_mode="HTML", reply_markup=reply_kb)
-        except Exception:
-            pass

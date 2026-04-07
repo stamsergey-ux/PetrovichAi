@@ -52,12 +52,6 @@ CHAIRMAN_EXTRA = """
 
 🔑 <b>Председатель — расширенный доступ</b>
 
-📝 <b>Поставить задачу</b>
-· Нажми кнопку и опиши голосом или текстом:
-  кому, что сделать, срок и приоритет
-· Исполнитель получит уведомление с кнопкой «Принял задачу»
-· Ты получишь отбивку о подтверждении получения
-
 📂 <b>Загрузка протоколов</b>
 · Отправь .txt или .pdf без подписи — разберу и создам задачи
 · После анализа — кнопки «Подтвердить» / «Отклонить»
@@ -135,7 +129,7 @@ async def _set_user_commands(bot: Bot, chat_id: int, role: str, username: str | 
     if role == "chairman":
         commands = [
             BotCommand(command="tasks", description="📋 Мои задачи"),
-            BotCommand(command="newtask", description="📝 Поставить задачу"),
+
             BotCommand(command="alltasks", description="👥 Все задачи"),
             BotCommand(command="dashboard", description="📊 Сводка"),
             BotCommand(command="protocol", description="📝 Протоколы"),
@@ -148,7 +142,7 @@ async def _set_user_commands(bot: Bot, chat_id: int, role: str, username: str | 
             commands.insert(6, BotCommand(command="notes", description="📋 Мои заметки"))
     elif role == "stakeholder":
         commands = [
-            BotCommand(command="newtask", description="💎 Поставить задачу"),
+
             BotCommand(command="assignments", description="💎 Мои поручения"),
             BotCommand(command="protocol", description="📝 Протоколы"),
             BotCommand(command="help", description="❓ Помощь"),
@@ -274,16 +268,7 @@ async def cmd_tasks(message: Message):
     await _show_my_tasks(message)
 
 
-@router.message(Command("newtask"))
-async def cmd_newtask(message: Message, state):
-    if is_stakeholder(message.from_user.username):
-        from app.handlers.stakeholder import start_task_creation
-        await start_task_creation(message, state)
-    elif is_chairman(message.from_user.username):
-        from app.handlers.chairman_tasks import start_chairman_task
-        await start_chairman_task(message, state)
-    else:
-        await message.answer("⛔ Постановка задач доступна председателям и акционерам.")
+
 
 
 @router.message(Command("alltasks"))
