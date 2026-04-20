@@ -1096,9 +1096,13 @@ async def cb_last_protocol(callback: CallbackQuery):
 
     date_str = meeting.date.strftime('%d.%m.%Y')
     title = escape(meeting.title or "Без названия")
-    summary = escape(meeting.summary or "—")
+    # Show original transcript text, truncated for Telegram
+    raw = meeting.summary or meeting.raw_transcript or "—"
+    if len(raw) > 1500:
+        raw = raw[:1500] + "…"
+    summary = escape(raw)
 
-    text = f"📝 <b>ПРОТОКОЛ</b>\n\n<b>{title}</b>\n📅 {date_str}\n\n<b>Краткое содержание:</b>\n{summary}\n"
+    text = f"📝 <b>ПРОТОКОЛ</b>\n\n<b>{title}</b>\n📅 {date_str}\n\n{summary}\n"
 
     if meeting.decisions:
         try:
