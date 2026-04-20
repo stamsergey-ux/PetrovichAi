@@ -1,4 +1,4 @@
-"""Scheduler: marks overdue tasks, sends notifications, manages meetings."""
+"""Scheduler: marks overdue tasks, manages meetings."""
 from __future__ import annotations
 
 import asyncio
@@ -26,37 +26,6 @@ async def mark_overdue_tasks():
             task.status = "overdue"
         if overdue_tasks:
             await session.commit()
-
-            # Push overdue to Aishot
-            try:
-                from app.webhook import push_event
-                for task in overdue_tasks:
-                    assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
-                    await push_event("task_overdue", {
-                        "task_id": task.id, "title": task.title,
-                        "assignee": assignee.name if assignee else "—",
-                        "deadline": str(task.deadline) if task.deadline else "—",
-                    })
-            except Exception:
-                pass
-
-            # Notify chairman about overdue tasks
-            chairman_result = await session.execute(
-                select(Member).where(Member.is_chairman == True)
-            )
-            chairmen = chairman_result.scalars().all()
-
-            overdue_text = f"🚨 *Просрочено задач: {len(overdue_tasks)}*\n\n"
-            for task in overdue_tasks[:10]:
-                days_over = (now - task.deadline).days if task.deadline else 0
-                overdue_text += f"  🔴 #{task.id} {task.title}\n"
-                overdue_text += f"      ⚠️ просрочено на {days_over} дн.\n\n"
-
-            for ch in chairmen:
-                try:
-                    await bot.send_message(ch.telegram_id, overdue_text)
-                except Exception:
-                    pass
 
 
 async def weekly_digest(bot: Bot, group_chat_id: int | None = None):

@@ -956,17 +956,7 @@ async def cb_confirm_done(callback: CallbackQuery, bot: Bot):
     except Exception:
         pass
 
-    # Notify assignee
-    if assignee and assignee.telegram_id and assignee.telegram_id > 0:
-        try:
-            await bot.send_message(
-                assignee.telegram_id,
-                f"✅ <b>Председатель подтвердил выполнение задачи #{task_id}</b>\n\n"
-                f"{escape(task.title)}\n\n<i>Задача закрыта.</i>",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
+    # No notification to assignee
 
 
 @router.callback_query(F.data.startswith("done_return:"))
