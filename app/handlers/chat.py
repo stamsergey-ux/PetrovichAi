@@ -82,6 +82,196 @@ async def _get_task_context(task_id: int) -> str | None:
     return "\n".join(lines)
 
 
+async def _get_tasks_summary() -> str:
+    """Get summary of all open tasks for AI context."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Task)
+            .where(Task.status.in_(["new", "in_progress", "overdue", "pending_done"]))
+            .order_by(Task.deadline.asc())
+        )
+        tasks = result.scalars().all()
+    if not tasks:
+        return "No open tasks."
+    lines = []
+    for t in tasks:
+        deadline = t.deadline.strftime("%d.%m.%Y") if t.deadline else "no deadline"
+        assignee_id = t.assignee_id or "unassigned"
+        lines.append(f"#{t.id} [{t.status}] {t.title}, assignee_id={assignee_id}, deadline: {deadline}")
+    return "\n".join(lines)
+
+
+async def _show_last_protocol(message: Message):
+    """Show last confirmed protocol — available to all members."""
+    from html import escape
+    async with async_session() as session:
+        result = await session.execute(
+            select(Meeting)
+            .where(Meeting.is_confirmed == True)
+            .order_by(Meeting.date.desc())
+            .limit(1)
+        )
+        meeting = result.scalar_one_or_none()
+
+    if not meeting:
+        await message.answer("📭 <b>Пока нет сохранённых протоколов.</b>", parse_mode="HTML")
+        return
+
+    date_str = meeting.date.strftime('%d.%m.%Y')
+    title = escape(meeting.title or "Без названия")
+    summary = escape(meeting.summary or "—")
+
+    text = f"📝 <b>ПРОТОКОЛ</b>\n\n<b>{title}</b>\n📅 {date_str}\n\n{summary}\n"
+
+    if meeting.decisions:
+        try:
+            decisions = json.loads(meeting.decisions)
+            if decisions:
+                text += f"\n⚖️ <b>РЕШЕНИЯ:</b>\n"
+                for d in decisions:
+                    text += f"  • {escape(d['text'])}\n"
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    if meeting.open_questions:
+        try:
+            questions = json.loads(meeting.open_questions)
+            if questions:
+                text += f"\n❓ <b>ОТКРЫТЫЕ ВОПРОСЫ:</b>\n"
+                for q in questions:
+                    text += f"  • {escape(q['text'])}\n"
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    if len(text) > 4000:
+        text = text[:4000] + "\n\n... <i>протокол обрезан</i>"
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 Мои задачи", callback_data="my_tasks")]
+    ])
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+async def _send_agenda(message: Message):
+    """Generate and send agenda — chairman only."""
+    from html import escape
+    async with async_session() as session:
+        # Recent meetings for context
+        meetings = (await session.execute(
+            select(Meeting).where(Meeting.is_confirmed == True)
+            .order_by(Meeting.date.desc()).limit(3)
+        )).scalars().all()
+        meetings_context = "\n\n".join(
+            f"{m.title} ({m.date.strftime('%d.%m.%Y')}): {(m.summary or '')[:300]}"
+            for m in meetings
+        ) or "Нет данных"
+
+        # Open tasks
+        open_tasks_result = await session.execute(
+            select(Task).where(Task.status.in_(["new", "in_progress"]))
+        )
+        open_tasks = open_tasks_result.scalars().all()
+        open_tasks_text = "\n".join(
+            f"#{t.id} {t.title} (deadline: {t.deadline.strftime('%d.%m.%Y') if t.deadline else '—'})"
+            for t in open_tasks
+        ) or "Нет"
+
+        # Overdue
+        overdue_result = await session.execute(
+            select(Task).where(Task.status == "overdue")
+        )
+        overdue_tasks = overdue_result.scalars().all()
+        overdue_text = "\n".join(
+            f"#{t.id} {t.title} (deadline: {t.deadline.strftime('%d.%m.%Y') if t.deadline else '—'})"
+            for t in overdue_tasks
+        ) or "Нет"
+
+        # Agenda items from meetings
+        agenda_items = ""
+        for m in meetings:
+            if m.agenda_items_next:
+                try:
+                    items = json.loads(m.agenda_items_next)
+                    if items:
+                        agenda_items += f"\nИз совещания {m.date.strftime('%d.%m.%Y')}:\n"
+                        for a in items:
+                            agenda_items += f"  • {a.get('topic', '?')} ({a.get('presenter', '?')})\n"
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+        # Pending agenda requests from members
+        pending_requests = (await session.execute(
+            select(AgendaRequest, Member)
+            .join(Member, AgendaRequest.member_id == Member.id)
+            .where(AgendaRequest.is_approved != False)
+            .where(AgendaRequest.is_included == False)
+        )).all()
+        if pending_requests:
+            agenda_items += "\n\nЗапросы от членов СД:\n"
+            for req, member in pending_requests:
+                name = member.display_name or member.first_name or member.username or "?"
+                dur = f", {req.duration_minutes} мин" if req.duration_minutes else ""
+                agenda_items += f"  • {req.topic} (от {name}{dur})\n"
+
+    await message.answer("🤖 Генерирую повестку...")
+
+    agenda = await generate_agenda(
+        meetings_context=meetings_context,
+        open_tasks=open_tasks_text,
+        overdue_tasks=overdue_text,
+        agenda_items_from_meetings=agenda_items or "Нет",
+    )
+
+    if len(agenda) > 4000:
+        parts = [agenda[i:i+4000] for i in range(0, len(agenda), 4000)]
+        for part in parts:
+            await message.answer(part)
+    else:
+        await message.answer(agenda)
+
+
+@router.message(F.text.regexp(r"(?i)добавь в адженду[:\s]+(.+)"))
+async def handle_agenda_add(message: Message):
+    """Handle free-text agenda item submission from any member."""
+    import re
+    match = re.search(r"(?i)добавь в адженду[:\s]+(.+)", message.text)
+    if not match:
+        return
+    raw = match.group(1).strip()
+
+    # Parse "тема, 15 мин" format
+    duration = None
+    topic = raw
+    dur_match = re.search(r",?\s*(\d+)\s*мин", raw)
+    if dur_match:
+        duration = int(dur_match.group(1))
+        topic = raw[:dur_match.start()].strip().rstrip(",").strip()
+
+    async with async_session() as session:
+        member = (await session.execute(
+            select(Member).where(Member.telegram_id == message.from_user.id)
+        )).scalar_one_or_none()
+        if not member:
+            await message.answer("⚠️ Ты не зарегистрирован. Нажми /start")
+            return
+
+        req = AgendaRequest(
+            member_id=member.id,
+            topic=topic,
+            duration_minutes=duration,
+        )
+        session.add(req)
+        await session.commit()
+
+    dur_text = f" ({duration} мин)" if duration else ""
+    await message.answer(
+        f"✅ <b>Добавлено в адженду</b>\n\n"
+        f"📌 {topic}{dur_text}\n\n"
+        f"<i>Председатель увидит это при генерации повестки.</i>",
+        parse_mode="HTML",
+    )
+
+
 async def _ai_chat(message: Message, override_text: str | None = None, state: FSMContext | None = None):
     """Handle free-form AI chat with RAG context."""
     from app.utils import is_stakeholder
