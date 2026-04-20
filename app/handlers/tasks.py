@@ -1080,6 +1080,7 @@ async def cb_task_progress(callback: CallbackQuery):
 
 @router.callback_query(F.data == "last_protocol")
 async def cb_last_protocol(callback: CallbackQuery):
+    from aiogram.types import BufferedInputFile
     async with async_session() as session:
         result = await session.execute(
             select(Meeting)
@@ -1096,13 +1097,9 @@ async def cb_last_protocol(callback: CallbackQuery):
 
     date_str = meeting.date.strftime('%d.%m.%Y')
     title = escape(meeting.title or "Без названия")
-    # Show original transcript text, truncated for Telegram
-    raw = meeting.summary or meeting.raw_transcript or "—"
-    if len(raw) > 1500:
-        raw = raw[:1500] + "…"
-    summary = escape(raw)
 
-    text = f"📝 <b>ПРОТОКОЛ</b>\n\n<b>{title}</b>\n📅 {date_str}\n\n{summary}\n"
+    # Short message with key info
+    text = f"📝 <b>ПРОТОКОЛ</b>\n\n<b>{title}</b>\n📅 {date_str}\n"
 
     if meeting.decisions:
         try:
@@ -1124,13 +1121,19 @@ async def cb_last_protocol(callback: CallbackQuery):
         except (json.JSONDecodeError, KeyError):
             pass
 
-    if len(text) > 4000:
-        text = text[:4000] + "\n\n... <i>протокол обрезан</i>"
-
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📋 Мои задачи", callback_data="my_tasks")]
     ])
     await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+    # Send full protocol as text file
+    full_text = meeting.raw_transcript or meeting.summary or ""
+    if full_text and full_text != "—":
+        safe_title = (meeting.title or "Протокол").replace("/", "-").replace("\\", "-")
+        filename = f"{date_str} {safe_title}.txt"
+        file = BufferedInputFile(full_text.encode("utf-8"), filename=filename)
+        await callback.message.answer_document(file)
+
     await callback.answer()
 
 

@@ -104,6 +104,7 @@ async def _get_tasks_summary() -> str:
 async def _show_last_protocol(message: Message):
     """Show last confirmed protocol — available to all members."""
     from html import escape
+    from aiogram.types import BufferedInputFile
     async with async_session() as session:
         result = await session.execute(
             select(Meeting)
@@ -119,9 +120,9 @@ async def _show_last_protocol(message: Message):
 
     date_str = meeting.date.strftime('%d.%m.%Y')
     title = escape(meeting.title or "Без названия")
-    summary = escape(meeting.summary or "—")
 
-    text = f"📝 <b>ПРОТОКОЛ</b>\n\n<b>{title}</b>\n📅 {date_str}\n\n{summary}\n"
+    # Short message with key info
+    text = f"📝 <b>ПРОТОКОЛ</b>\n\n<b>{title}</b>\n📅 {date_str}\n"
 
     if meeting.decisions:
         try:
@@ -143,13 +144,18 @@ async def _show_last_protocol(message: Message):
         except (json.JSONDecodeError, KeyError):
             pass
 
-    if len(text) > 4000:
-        text = text[:4000] + "\n\n... <i>протокол обрезан</i>"
-
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📋 Мои задачи", callback_data="my_tasks")]
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+    # Send full protocol as text file
+    full_text = meeting.raw_transcript or meeting.summary or ""
+    if full_text and full_text != "—":
+        safe_title = (meeting.title or "Протокол").replace("/", "-").replace("\\", "-")
+        filename = f"{date_str} {safe_title}.txt"
+        file = BufferedInputFile(full_text.encode("utf-8"), filename=filename)
+        await message.answer_document(file)
 
 
 async def _send_agenda(message: Message):
