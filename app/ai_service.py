@@ -21,7 +21,6 @@ Extract the following in JSON format:
   "title": "short meeting title in Russian",
   "date": "YYYY-MM-DD if found, else null",
   "participants": ["list of participant names found"],
-  "summary": "structured summary in Russian, organized by topics discussed",
   "tasks": [
     {{
       "title": "task description in Russian",

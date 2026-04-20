@@ -938,6 +938,7 @@ async def cb_confirm_done(callback: CallbackQuery, bot: Bot):
         task.completed_at = datetime.utcnow()
         await session.commit()
         assignee = await session.get(Member, task.assignee_id) if task.assignee_id else None
+        assignee_name = assignee.name if assignee else "—"
 
     await callback.answer("✅ Подтверждено!")
     await callback.message.answer(
@@ -945,7 +946,27 @@ async def cb_confirm_done(callback: CallbackQuery, bot: Bot):
         parse_mode="HTML",
     )
 
-    # No notification to assignee
+    # Push to Aishot
+    try:
+        from app.webhook import push_event
+        await push_event("task_updated", {
+            "task_id": task_id, "title": task.title,
+            "assignee": assignee_name, "status": "done",
+        })
+    except Exception:
+        pass
+
+    # Notify assignee
+    if assignee and assignee.telegram_id and assignee.telegram_id > 0:
+        try:
+            await bot.send_message(
+                assignee.telegram_id,
+                f"✅ <b>Председатель подтвердил выполнение задачи #{task_id}</b>\n\n"
+                f"{escape(task.title)}\n\n<i>Задача закрыта.</i>",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data.startswith("done_return:"))

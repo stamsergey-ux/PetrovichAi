@@ -198,7 +198,7 @@ async def _process_transcript(message: Message, transcript: str, source_name: st
             date=meeting_date,
             title=analysis.get("title", ""),
             raw_transcript=transcript,
-            summary=analysis.get("summary", ""),
+            summary=transcript,  # keep original text as-is, no AI re-summarization
             participants=", ".join(analysis.get("participants", [])),
             decisions=json.dumps(analysis.get("decisions", []), ensure_ascii=False),
             open_questions=json.dumps(analysis.get("open_questions", []), ensure_ascii=False),
@@ -219,12 +219,13 @@ async def _process_transcript(message: Message, transcript: str, source_name: st
 
     title = analysis.get("title", "Без названия")
     date = analysis.get("date", "дата не определена")
-    summary = analysis.get("summary", "")
 
     review_text = f"📝 ПРОТОКОЛ НА ПРОВЕРКУ\n\n"
     review_text += f"📌 {title}\n"
     review_text += f"📅 {date}  ·  📎 {source_name}\n\n"
-    review_text += f"💡 Краткое содержание:\n{summary}\n"
+    # Show original transcript text (truncated if too long for Telegram)
+    transcript_preview = transcript[:1500] + "…" if len(transcript) > 1500 else transcript
+    review_text += f"📄 Текст протокола:\n{transcript_preview}\n"
 
     if tasks:
         review_text += f"\n{'─' * 30}\n"
@@ -407,6 +408,20 @@ async def confirm_protocol(callback: CallbackQuery):
 
         await callback.message.answer(result_text)
         await callback.answer("Подтверждено!")
+
+        # Push to Aishot
+        try:
+            from app.webhook import push_event
+            await push_event("protocol_confirmed", {
+                "meeting_id": meeting.id,
+                "title": analysis.get("title", ""),
+                "summary": (analysis.get("summary") or "")[:500],
+                "tasks_created": tasks_created,
+                "tasks_completed": tasks_completed,
+                "decisions": analysis.get("decisions", []),
+            })
+        except Exception:
+            pass
 
         # Immediately start verification for the newly created tasks
         if tasks_created > 0:

@@ -29,6 +29,17 @@ async def main():
     await init_db()
     await seed_members_from_config()
 
+    # One-time migration: restore original transcript as summary (no AI re-summarization)
+    from sqlalchemy import select as sa_select
+    from app.database import async_session, Meeting
+    async with async_session() as session:
+        meetings = (await session.execute(sa_select(Meeting))).scalars().all()
+        for m in meetings:
+            if m.raw_transcript and m.summary != m.raw_transcript:
+                m.summary = m.raw_transcript
+        await session.commit()
+    logging.info("Migration: summaries restored from raw_transcript")
+
     # Start web panel alongside the bot
     try:
         import uvicorn
