@@ -33,8 +33,8 @@ async def main():
     from sqlalchemy import select as sa_select
     from app.database import async_session, Meeting
     async with async_session() as session:
-        meetings = (await session.execute(sa_select(Meeting))).scalars().all()
-        for m in meetings:
+        meeting_rows = (await session.execute(sa_select(Meeting))).scalars().all()
+        for m in meeting_rows:
             if m.raw_transcript and m.summary != m.raw_transcript:
                 m.summary = m.raw_transcript
         await session.commit()
